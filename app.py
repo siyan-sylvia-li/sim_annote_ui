@@ -299,6 +299,47 @@ def update_segment_speaker():
     
     return jsonify({'success': True, 'message': 'Speaker updated successfully'})
 
+### NEW ENDPOINT ADDED: Allow editing transcript text ###
+@app.route('/update_segment_text', methods=['POST'])
+def update_segment_text():
+    """Update the transcript text for a segment"""
+    data = request.get_json()
+    segment_id = data.get('segment_id')
+    text = data.get('text')
+    
+    logger.info(f"Request to update segment {segment_id} text")
+
+    if segment_id is None or text is None:
+        logger.error("Missing segment_id or text in request")
+        return jsonify({'error': 'Missing segment_id or text'}), 400
+    
+    if session.get("current_speaker_results_file"):
+        whisper_results = json.load(open(session["current_speaker_results_file"], "r"))
+    else:
+        whisper_results = load_whisper_results()
+    if not whisper_results:
+        logger.error("No transcription results available for text update")
+        return jsonify({'error': 'No transcription results available'}), 400
+    
+    # Update the text for the segment
+    if 'segments' in whisper_results:
+        for segment in whisper_results['segments']:
+            if segment.get('id') == segment_id:
+                segment['text'] = text
+                logger.info(f"Updated segment {segment_id} text")
+                break
+    
+    # Save the updated results back to file
+    if not session.get("current_speaker_results_file"):
+        session["current_speaker_results_file"] = session["current_whisper_results_file"].replace(".json", "_speaker_results.json")
+    whisper_results_file = session["current_speaker_results_file"]
+    with open(whisper_results_file, "w") as f:
+        json.dump(whisper_results, f)
+    logger.info(f"Saved updated results to: {whisper_results_file}")
+    
+    return jsonify({'success': True, 'message': 'Transcript text updated successfully'})
+### END NEW ENDPOINT ###
+
 @app.route('/export_labels')
 def export_labels():
     """Export labels in the required format for evaluation"""

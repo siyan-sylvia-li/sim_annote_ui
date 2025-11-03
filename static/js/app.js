@@ -362,6 +362,66 @@ function renderSegments() {
     `).join('');
 }
 
+// ADDED EDIT CAPABILITY
+function enableEdit(segmentId) {
+    const textDiv = document.getElementById(`segment-text-${segmentId}`);
+    if (!textDiv) return;
+
+    // Prevent re-enabling edit mode if already active
+    if (textDiv.contentEditable === "true") return;
+
+    textDiv.contentEditable = "true";
+    textDiv.focus();
+
+    // Place cursor at the end of the text when Edit button is clicked
+    const range = document.createRange();
+    range.selectNodeContents(textDiv);
+    range.collapse(false);
+    const sel = window.getSelection();
+    sel.removeAllRanges();
+    sel.addRange(range);
+
+    // Add a Save button directly after the text div
+    const saveBtn = document.createElement('button');
+    saveBtn.textContent = "SAVE UPDATES";
+    saveBtn.className = "btn btn-sm btn-success ms-2";
+    saveBtn.setAttribute('data-save-for', String(segmentId));
+    saveBtn.onclick = () => saveEditedText(segmentId);
+    textDiv.parentNode.insertBefore(saveBtn, textDiv.nextSibling);
+}
+
+function saveEditedText(segmentId) {
+    const textDiv = document.getElementById(`segment-text-${segmentId}`);
+    if (!textDiv) return;
+
+    const newText = textDiv.innerText.trim();
+    textDiv.contentEditable = "false";
+    // After save button clicked, locks the text so it is not editable anymore
+    
+    // Remove inline Save button
+    const nextEl = textDiv.nextSibling;
+    if (nextEl && nextEl.tagName === 'BUTTON' && nextEl.getAttribute('data-save-for') === String(segmentId)) {
+        nextEl.remove();
+    }
+
+    // Update locally
+    const seg = currentSegments.find(s => s.id === segmentId);
+    if (seg) seg.text = newText;
+
+    // Send update to backend
+    fetch('/update_segment_text', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ segment_id: segmentId, text: newText })
+    })
+    .then(r => r.json())
+    .then(data => {
+        if (data.success) showStatus(`Segment ${segmentId} text updated successfully`, 'success');
+        else showStatus(`Error updating text: ${data.error}`, 'error');
+    })
+    .catch(err => showStatus(`Error updating text: ${err.message}`, 'error'));
+}
+// End of Added Functionality Segment!
 function filterSegments(segments, filter) {
     switch (filter) {
         case 'unlabeled':

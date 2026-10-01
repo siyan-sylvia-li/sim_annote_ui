@@ -1,0 +1,164 @@
+{
+  "id": "clc",
+  "version": "1",
+  "title": "Closed Loop Communication",
+  "speakers": ["Team Leader", "Med Nurse", "CPR Personnel", "Airway", "Documenting Nurse"],
+  "role_aliases": {
+    "TL": "Team Leader",
+    "MED RN": "Med Nurse",
+    "DOC RN": "Documenting Nurse",
+    "RT": "Airway",
+    "CPR": "CPR Personnel",
+    "CPR2": "CPR Personnel 2"
+  },
+  "fields": [
+    {
+      "key": "loop_opened",
+      "label": "Loop Opened",
+      "type": "choice",
+      "required": true,
+      "help": "Single = one task/question to one person. Double = two to one person. Multiple = more than two to one person. Two tasks to two different people are two separate call-outs.",
+      "options": [
+        { "value": "single", "label": "Single Loop", "short": "Single" },
+        { "value": "double", "label": "Double Loop", "short": "Double" },
+        { "value": "multiple", "label": "Multiple Loop", "short": "Multiple" }
+      ]
+    },
+    {
+      "key": "direction",
+      "label": "Call Out Direction",
+      "type": "choice",
+      "required": true,
+      "help": "Name/Title if the initiator included someone's name or title; otherwise Undirected.",
+      "options": [
+        { "value": "name_title", "label": "Name/Title" },
+        { "value": "undirected", "label": "Undirected" }
+      ]
+    },
+    {
+      "key": "initiator",
+      "label": "Initiator",
+      "type": "choice",
+      "required": true,
+      "options": [
+        { "value": "team_leader", "label": "Team Leader" },
+        { "value": "other", "label": "Other" }
+      ]
+    },
+    {
+      "key": "recipient",
+      "label": "Intended/Assumed Recipient",
+      "type": "choice",
+      "required": true,
+      "help": "Directed: the named recipient. Undirected: the assumed recipient; Unspecified (group) if aimed at the group, Unknown if it can't be assumed.",
+      "options": [
+        { "value": "team_leader", "label": "Team Leader", "short": "TL" },
+        { "value": "med_nurse", "label": "Med Nurse", "short": "Med" },
+        { "value": "cpr_personnel", "label": "CPR Personnel", "short": "CPR" },
+        { "value": "airway", "label": "Airway" },
+        { "value": "documenting_nurse", "label": "Documenting Nurse", "short": "Doc" },
+        { "value": "unspecified_group", "label": "Unspecified (group)", "short": "Group" },
+        { "value": "unknown", "label": "Unknown" }
+      ]
+    },
+    {
+      "key": "content_domain",
+      "label": "Loop Content Domain",
+      "type": "choice",
+      "required": true,
+      "help": "A question is Information Seeking. A task is Task Direction; pick the corresponding task.",
+      "options": [
+        { "value": "information_seeking", "label": "Information Seeking", "short": "Info" },
+        { "value": "med_order", "label": "Med Order", "group": "Task Direction", "short": "Med" },
+        { "value": "cpr", "label": "CPR", "group": "Task Direction" },
+        { "value": "zoll", "label": "Zoll", "group": "Task Direction" },
+        { "value": "other", "label": "Other", "group": "Task Direction" }
+      ]
+    },
+    {
+      "key": "verbal_check_back",
+      "label": "Verbal Check Back (timestamp)",
+      "type": "timestamps",
+      "help": "For double/multiple loops, add every check back to the same loop, each with its own timestamp.",
+      "lists": [
+        {
+          "key": "information",
+          "label": "Information Check Back",
+          "hotkey": "i",
+          "help": "Info seeking: the answer to the question. Task: the recipient acknowledging the request."
+        },
+        {
+          "key": "task_completion",
+          "label": "Task Completion Check Back",
+          "hotkey": "t",
+          "help": "Recipient acknowledging they completed the task. Never present for information-seeking call-outs."
+        }
+      ]
+    },
+    {
+      "key": "task_completion",
+      "label": "Task Completion",
+      "type": "choice",
+      "required": true,
+      "help": "Use check backs and other cues (e.g. hearing CPR being performed). For information seeking, Full if the question was answered.",
+      "options": [
+        { "value": "full", "label": "Full Task Completion", "short": "Full" },
+        { "value": "partial", "label": "Partial Task Completion", "short": "Partial" },
+        { "value": "none", "label": "No Task Completion", "short": "None" }
+      ]
+    },
+    {
+      "key": "loop_closure",
+      "label": "Loop Closure (timestamp)",
+      "type": "timestamps",
+      "help": "The initiator acknowledging receipt of the check back. Double/multiple loops: one entry per closure.",
+      "lists": [
+        { "key": "closure", "label": "Loop Closure", "hotkey": "c" }
+      ]
+    },
+    {
+      "key": "notes",
+      "label": "Notes",
+      "type": "notes",
+      "help": "Characteristic features of the call-out, using the glossary.",
+      "tags": [
+        { "value": "linked_loop", "label": "Linked Loop" },
+        { "value": "sequentially_independent_loop", "label": "Sequentially Independent Loop" },
+        { "value": "sequentially_dependent_loop", "label": "Sequentially Dependent Loop" }
+      ]
+    }
+  ],
+  "rules": [
+    {
+      "message": "Information-seeking call-outs don't have a Task Completion Check Back.",
+      "when": [{ "field": "content_domain", "equals": "information_seeking" }],
+      "expect": [{ "field": "verbal_check_back.task_completion", "empty": true }]
+    },
+    {
+      "message": "Information-seeking call-out was answered (has an Information Check Back), so Task Completion should be Full.",
+      "when": [
+        { "field": "content_domain", "equals": "information_seeking" },
+        { "field": "verbal_check_back.information", "empty": false }
+      ],
+      "expect": [{ "field": "task_completion", "equals": "full" }]
+    },
+    {
+      "message": "A directed (Name/Title) call-out should have a specific recipient, not Unspecified (group) or Unknown.",
+      "when": [{ "field": "direction", "equals": "name_title" }],
+      "expect": [{ "field": "recipient", "not_in": ["unspecified_group", "unknown"] }]
+    },
+    {
+      "message": "Loop Closure is the initiator acknowledging a check back, but there is no Verbal Check Back.",
+      "when": [{ "field": "loop_closure", "empty": false }],
+      "expect": [{ "any": [
+        { "field": "verbal_check_back.information", "empty": false },
+        { "field": "verbal_check_back.task_completion", "empty": false }
+      ] }]
+    },
+    {
+      "message": "Single loop has more than one Task Completion Check Back. Should this be a Double/Multiple loop?",
+      "when": [{ "field": "loop_opened", "equals": "single" }],
+      "expect": [{ "field": "verbal_check_back.task_completion", "max_count": 1 }]
+    }
+  ]
+}

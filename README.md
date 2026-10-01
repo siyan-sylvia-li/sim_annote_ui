@@ -121,3 +121,50 @@ This project is provided as-is for educational and research purposes.
 ## Contributing
 
 Feel free to submit issues, feature requests, or pull requests to improve the application.
+
+## CLC Annotation App (replaces the CLC Excel recording sheet)
+
+`annotate_app.py` is a separate app for closed-loop communication (CLC) coding. Raters play a session recording, mark call-outs on a timeline and fill in the same columns as the "Closed Loop Communication Data Recording Sheet". Each rater's work is saved as one JSON file per recording.
+
+### Running it with Box (raters, on your own laptop)
+
+Recordings stream from Box through Box's own viewer with a preview-only token, so nothing is downloaded and **view access to the Box folder is enough**.
+
+1. One-time setup: copy `.env.example` to `.env` and fill in `BOX_CLIENT_ID`, `BOX_CLIENT_SECRET` and `BOX_FOLDER_ID` (ask the project lead; never commit `.env`).
+2. Start the app:
+   ```bash
+   python annotate_app.py --storage box
+   ```
+3. Open `http://localhost:5050`, click **Sign in with Box** and sign in with the Box account the recordings are shared with.
+4. Pick a recording, enter your rater name and click **Load**.
+
+Annotations autosave **on your laptop** in `data/annotations/<recording>/<rater>.json` (git-ignored); **Export JSON** downloads a copy. Unsaved work is also kept in the browser until the save is confirmed, and you are offered to restore it if it didn't make it.
+
+**Box app setup (project lead, once):** with a free [Box Developer account](https://account.box.com/signup/developer) (a regular Box account can't save these settings), create a *Platform App → User Authentication (OAuth 2.0)*. Set the redirect URI to `http://localhost:5050/box/callback`, add `http://localhost:5050` to *CORS Domains* (the viewer needs it), and enable *Read all files and folders*. Raters still sign in with their own Box accounts; the developer account only holds the app's settings.
+
+### Recordings
+
+The app lists **recordings**, grouped automatically from the files in the Box folder (`recordings.py`):
+
+- **A single video or WAV** with the whole conversation: one recording per file. A folder with several such files (e.g. several scenario runs) gives several recordings.
+- **One WAV per person's mic**, named like `Audio 4 TL#02.wav`: all files with the same `#NN` in a folder form one recording. The **Listen to** menu switches between people's mics at the same timestamp. Role codes map to names via `role_aliases` in `schemes/clc.json` (TL → Team Leader, MED RN → Med Nurse, DOC RN → Documenting Nurse, RT → Airway, CPR / CPR2 → CPR Personnel / CPR Personnel 2).
+- **Several camera angles**, named alike except `_C200_`, `_C201_`, …: one recording with a camera picker.
+
+### Transcripts
+
+If a recording has a transcript, load it with **Import transcript** (Whisper output with `segments`, or the labels exported from the original app). It appears under the player; click a segment (Shift+click for a range) to select it, and assign speakers from the menu on each segment. Labels created from selected segments store their ids (`segment_ids`), linking each call-out and check back to its utterances.
+
+### Development with local files
+
+```bash
+python annotate_app.py --media-root /path/to/recordings
+```
+
+Annotations go to `data/annotations/` (change with `--annotations-root`).
+
+### Using the app
+
+- **Selecting**: drag on the timeline, or click transcript segments, then press `N` / `I` / `T` / `C` or use the buttons that appear.
+- **Coding scheme**: `schemes/clc.json` defines the columns, options, help text (from the CLC Audio Tagging Training Guide) and consistency warnings. The form, the timeline and the table are all generated from it.
+- **Loops table**: the **Loops table** button opens all call-outs in the recording sheet's layout; cells there can be edited too.
+- **Shortcuts**: `Space` play/pause · `N` new call-out · `I` / `T` / `C` add Information Check Back / Task Completion Check Back / Loop Closure at the current time · `←`/`→` seek 5s (Shift: 1s) · `[` / `]` previous/next call-out.

@@ -52,8 +52,12 @@ def decode_key(key: str) -> dict:
 
 def download_from_box(payload: dict, folder: Path) -> list:
     """Fetch the recording's files with the key's download-only tokens. Returns [{'role', 'path'}]."""
+    wanted = payload['files']
+    if not any(f['role'] for f in wanted):
+        # Camera angles of one recording share a soundtrack; only the first is transcribed
+        wanted = wanted[:1]
     files = []
-    for f in payload['files']:
+    for f in wanted:
         path = folder / f"{f['id']}_{re.sub(r'[^A-Za-z0-9._ #-]+', '_', f['name'])}"
         logger.info(f"Downloading {f['name']} from Box")
         resp = requests.get(f"https://api.box.com/2.0/files/{f['id']}/content",

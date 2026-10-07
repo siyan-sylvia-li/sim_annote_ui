@@ -13,6 +13,7 @@ Box recordings are played through the Box Content Preview SDK with a preview-onl
 raters never download them and view access to the Box folder is enough. Switching is a config
 change (`--storage box`); the UI only sees the `player` descriptor returned by `get_player()`.
 """
+import base64
 import json
 import os
 import re
@@ -231,6 +232,8 @@ class BoxStorage(Storage):
       recordings by '<folder id>#<take or camera prefix>'.
     * Playback: the front end renders each file with Box Content Preview using a token
       downscoped to preview-only scopes on that one file, so it can't be used to download.
+    * Transcription: `colab_key` hands colab_transcribe.py download-only tokens for one
+      recording's files, so Colab can fetch the audio without the rater downloading anything.
     """
     requires_login = True
     player_type = 'box'
@@ -350,21 +353,51 @@ class BoxStorage(Storage):
     def _file_source(self, file_id: str) -> dict:
         return {'file_id': file_id}
 
-    def preview_token(self, session_id: str, file_id: str) -> dict:
-        """A token that can only preview `file_id`, which must belong to this recording."""
-        if file_id not in {f['id'] for f in self.recording(session_id)['files']}:
-            raise FileNotFoundError(file_id)
+    def _downscoped(self, file_id: str, scope: str) -> dict:
+        """Exchange the rater's token for one limited to `scope` on this one file."""
         resp = requests.post(self.TOKEN_URL, timeout=30, data={
             'grant_type': 'urn:ietf:params:oauth:grant-type:token-exchange',
             'subject_token': self._token(),
             'subject_token_type': 'urn:ietf:params:oauth:token-type:access_token',
-            'scope': self.PREVIEW_SCOPES,
+            'scope': scope,
             'resource': f"{self.API}/files/{file_id}",
         })
         if resp.status_code != 200:
             raise FileNotFoundError(file_id)
-        token = resp.json()
+        return resp.json()
+
+    def preview_token(self, session_id: str, file_id: str) -> dict:
+        """A token that can only preview `file_id`, which must belong to this recording."""
+        if file_id not in {f['id'] for f in self.recording(session_id)['files']}:
+            raise FileNotFoundError(file_id)
+        token = self._downscoped(file_id, self.PREVIEW_SCOPES)
         return {'token': token['access_token'], 'expires_in': token.get('expires_in')}
+
+    def colab_key(self, session_id: str) -> dict:
+        """
+        A key for colab_transcribe.py: one token per file of this recording, each limited to
+        downloading that one file and expiring after about an hour. It can't list, change or
+        share anything, and doesn't contain the rater's own sign-in.
+        """
+        rec = self.recording(session_id)
+        files, expires_in = [], 3600
+        for f in rec['files']:
+            # Box can switch downloads off for a folder or role; a key would then fail on Colab,
+            # so say so here instead
+            resp = self._request('GET', f"{self.API}/files/{f['id']}", params={'fields': 'permissions'})
+            _check(resp, f"read the permissions of '{f['name']}'")
+            if not resp.json().get('permissions', {}).get('can_download', False):
+                raise BoxAPIError(403, 'downloads_not_allowed',
+                                  f"your Box account isn't allowed to download '{f['name']}', so Colab can't fetch it. "
+                                  "Ask the folder owner to allow downloads for whoever runs the transcription",
+                                  'make a Colab key')
+            token = self._downscoped(f['id'], 'item_download')
+            expires_in = min(expires_in, token.get('expires_in', 3600))
+            files.append({'id': f['id'], 'name': f['name'], 'role': f['role'], 'token': token['access_token']})
+        payload = {'recording': rec['name'], 'session_id': session_id, 'kind': rec['kind'],
+                   'expires_at': int(time.time()) + int(expires_in), 'files': files}
+        key = 'clc1.' + base64.urlsafe_b64encode(json.dumps(payload).encode()).decode().rstrip('=')
+        return {'key': key, 'recording': rec['name'], 'files': len(files), 'expires_in': expires_in}
 
 
 def new_oauth_state() -> str:

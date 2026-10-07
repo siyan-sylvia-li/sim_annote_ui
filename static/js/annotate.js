@@ -383,6 +383,8 @@ async function loadSessionList() {
 async function init() {
     state.scheme = await (await fetchApi(`/api/scheme/${SCHEME_ID}`)).json();
     const auth = await (await fetchApi('/api/auth')).json();
+    state.canMakeColabKey = Boolean(auth.can_make_colab_key);
+    $('colabKeyBtn').classList.toggle('d-none', !state.canMakeColabKey);
     $('saveStatus').title = auth.save_location === 'Box' ? 'Annotations are saved to Box' : `Annotations are saved on this computer in ${auth.save_location}`;
     if (auth.login_required) {
         $('signOutBtn').classList.toggle('d-none', !auth.authenticated);
@@ -844,7 +846,11 @@ function renderTranscript() {
     if (!all.length) {
         list.appendChild(el('div', { class: 'transcript-empty' },
             el('p', { class: 'mb-1' }, 'No transcript for this session yet.'),
-            el('p', { class: 'small text-muted mb-0' }, 'If you have one, load it with ', el('strong', { text: 'Import transcript' }),
+            el('p', { class: 'small text-muted mb-0' },
+                state.canMakeColabKey ? 'Make one on Colab (' : 'Make one with colab_transcribe.py (',
+                state.canMakeColabKey ? el('strong', { text: 'Copy Colab key' }) : null,
+                state.canMakeColabKey ? ', then the notebook' : 'on a GPU machine',
+                ') and load it with ', el('strong', { text: 'Import transcript' }),
                 '. You can annotate from the recording and timeline either way.')));
         return;
     }
@@ -974,6 +980,28 @@ function openSpeakerMenu(anchor, seg) {
 
 function closeSpeakerMenu() { $('speakerMenu').classList.add('d-none'); }
 
+// A one-hour, download-only key for this recording's files, pasted into colab_transcribe.ipynb
+async function copyColabKey() {
+    const resp = await fetchApi('/api/colab_key', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ session: state.sessionId }),
+    });
+    const data = await resp.json().catch(() => ({}));
+    if (!resp.ok) {
+        if (resp.status !== 401) toast(data.error || 'Could not make a Colab key', 'danger');
+        return;
+    }
+    const minutes = Math.round((data.expires_in || 3600) / 60);
+    try {
+        await navigator.clipboard.writeText(data.key);
+        toast(`Copied a Colab key for ${data.recording} (valid ~${minutes} min). Paste it into the notebook.`, 'success');
+    } catch (e) {
+        // Clipboard can be blocked; show it to copy by hand instead
+        prompt(`Colab key for ${data.recording} (valid ~${minutes} min). Copy it:`, data.key);
+    }
+}
+
 // Accepts Whisper output ({segments: [...]}), this app's transcript, or the original app's
 // exported labels ([{speaker, start, end, text}, ...])
 async function importTranscript(file) {
@@ -1003,6 +1031,7 @@ async function importTranscript(file) {
 
 function setupTranscriptControls() {
     $('segmentFilter').addEventListener('change', renderTranscript);
+    $('colabKeyBtn').addEventListener('click', copyColabKey);
     $('importBtn').addEventListener('click', () => $('importInput').click());
     $('importInput').addEventListener('change', e => {
         if (e.target.files[0]) importTranscript(e.target.files[0]);

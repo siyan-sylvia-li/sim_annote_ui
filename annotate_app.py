@@ -26,6 +26,7 @@ from flask import Flask, abort, jsonify, redirect, render_template, request, sen
 from werkzeug.exceptions import HTTPException
 
 from annotation_storage import AuthRequired, BoxAPIError, BoxStorage, LocalStorage, new_oauth_state
+from transcription import normalize_segments
 
 BASE_DIR = Path(__file__).resolve().parent
 SCHEME_DIR = BASE_DIR / 'schemes'
@@ -92,7 +93,8 @@ def index():
 @app.route('/api/auth')
 def auth_status():
     return jsonify({'login_required': storage.requires_login, 'authenticated': storage.is_authenticated(),
-                    'save_location': storage.save_location})
+                    'save_location': storage.save_location,
+                    'can_make_colab_key': isinstance(storage, BoxStorage)})
 
 
 @app.route('/box/login')
@@ -197,40 +199,10 @@ def save_annotations():
 
 # ---------- Transcript ----------
 #
-# A transcript is imported from a JSON file (Whisper output, or labels exported from the
-# original app) and saved with the recording's annotations. Raters can then assign or fix
+# A transcript is imported from a JSON file (made on Colab with colab_transcribe.py, plain
+# Whisper output, or labels exported from the original app) and saved with the recording's
+# annotations. Raters can then assign or fix
 # the speaker of each segment.
-
-
-def normalize_segments(raw_segments):
-    """
-    Keep the fields the UI needs; drop empty / punctuation-only segments like the original app.
-    Existing segment ids are kept (annotations link to them), so deleting a segment never renumbers the rest.
-    """
-    segments = []
-    used_ids = set()
-    next_id = max([s['id'] for s in raw_segments if isinstance(s.get('id'), int)] + [-1]) + 1
-    for seg in raw_segments:
-        text = str(seg.get('text', '')).strip()
-        if not text.replace('.', '').strip():
-            continue
-        seg_id = seg.get('id')
-        if not isinstance(seg_id, int) or seg_id in used_ids:
-            seg_id = next_id
-            next_id += 1
-        used_ids.add(seg_id)
-        out = {
-            'id': seg_id,
-            'start': round(float(seg.get('start', 0.0)), 2),
-            'end': round(float(seg.get('end', 0.0)), 2),
-            'text': text,
-            'speaker': seg.get('speaker', '') or '',
-            'speaker_source': seg.get('speaker_source') or ('manual' if seg.get('speaker') else ''),
-        }
-        if seg.get('words'):
-            out['words'] = [{'word': w.get('word', ''), 'start': w.get('start'), 'end': w.get('end')} for w in seg['words']]
-        segments.append(out)
-    return segments
 
 
 def session_arg():
@@ -238,6 +210,17 @@ def session_arg():
     if not session_id:
         abort(400, 'session is required')
     return session_id
+
+
+@app.route('/api/colab_key', methods=['POST'])
+def colab_key():
+    """Box only: a short-lived, download-only key for one recording's files, for colab_transcribe.py."""
+    if not isinstance(storage, BoxStorage):
+        abort(404, 'Colab keys are only needed when recordings are in Box')
+    session_id = session_arg()
+    key = storage.colab_key(session_id)
+    logger.info(f"Made a Colab key for {key['recording']} ({key['files']} files)")
+    return jsonify(key)
 
 
 @app.route('/api/transcript', methods=['GET'])

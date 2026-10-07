@@ -152,7 +152,15 @@ The app lists **recordings**, grouped automatically from the files in the Box fo
 
 ### Transcripts
 
-If a recording has a transcript, load it with **Import transcript** (Whisper output with `segments`, or the labels exported from the original app). It appears under the player; click a segment (Shift+click for a range) to select it, and assign speakers from the menu on each segment. Labels created from selected segments store their ids (`segment_ids`), linking each call-out and check back to its utterances.
+Whisper needs a GPU, so transcripts are made on Google Colab and then imported:
+
+1. In the app (signed in with Box), open the recording and click **Copy Colab key**. The key lets Colab download only that recording's files, for about an hour. The app first checks that Box allows your account to download them.
+2. Open `colab_transcribe.ipynb` in Colab, switch to a GPU runtime (**Runtime → Change runtime type → T4 GPU**), run the cells and paste the key when asked. It fetches the audio from Box, runs Whisper (`whisper_transcribe.py`), deletes the audio and downloads a `.transcript.json`.
+3. Back in the app, with the same recording open: **Import transcript**.
+
+Recordings with one mic per person get their speakers from the file names; speech picked up on other people's mics is kept only where it was loudest (`transcription.py`). For single-mic recordings, assign speakers in the app. `colab_transcribe.py --audio <files>` also works on audio already on the machine.
+
+**Import transcript** also accepts plain Whisper output (with `segments`) or the labels exported from the original app. It appears under the player; click a segment (Shift+click for a range) to select it, and assign speakers from the menu on each segment. Labels created from selected segments store their ids (`segment_ids`), linking each call-out and check back to its utterances.
 
 ### Development with local files
 

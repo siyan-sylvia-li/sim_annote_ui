@@ -51,7 +51,8 @@ def transcribe_with_whisper(file_path: str, segment_dir: str, save_json: bool = 
         # elif os.path.exists(os.path.join(os.path.dirname(file_path), "whisper_results.json")):
         #     result = json.load(open(os.path.join(os.path.dirname(file_path), "whisper_results.json")))
         # else:
-        result = model.transcribe(file_path, word_timestamps=True)
+        # verbose=False shows a progress bar instead of printing nothing until it's done
+        result = model.transcribe(file_path, word_timestamps=True, verbose=False)
         if save_json:
             json.dump(result, open(f"{segment_dir}/whisper_results.json", "w"))
     except Exception as e:

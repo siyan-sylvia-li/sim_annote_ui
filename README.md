@@ -138,8 +138,6 @@ Recordings stream from Box through Box's own viewer with a preview-only token, s
 
 Annotations autosave **on your laptop** in `data/annotations/<recording>/<rater>.json` (git-ignored); **Export JSON** downloads a copy. Unsaved work is also kept in the browser until the save is confirmed, and you are offered to restore it if it didn't make it.
 
-**Raters vs. project lead.** Raters' settings have the recordings and transcripts folders. The project lead's settings also have `BOX_VIDEO_SESSIONS_FOLDER_ID`, which turns on the buttons for preparing recordings (**Copy Colab key**, **Import transcript**, **Copy video sync key**, **Re-sync**); raters don't see them and just get the shared transcripts and synced videos from Box.
-
 **Box app setup (project lead, once):** with a free [Box Developer account](https://account.box.com/signup/developer) (a regular Box account can't save these settings), create a *Platform App → User Authentication (OAuth 2.0)*. Set the redirect URI to `http://localhost:5050/box/callback`, add `http://localhost:5050` to *CORS Domains* (the viewer needs it), and enable *Read all files and folders*. Raters still sign in with their own Box accounts; the developer account only holds the app's settings.
 
 ### Recordings

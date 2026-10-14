@@ -389,10 +389,7 @@ async function init() {
     const auth = await (await fetchApi('/api/auth')).json();
     state.sharedTranscripts = Boolean(auth.shared_transcripts);
     state.videoSync = Boolean(auth.video_sync);
-    // Preparing recordings (transcripts, video sync on Colab) is for whoever's settings include the
-    // sessions folder, i.e. the project lead; raters just get the results from Box
-    state.preparer = !auth.login_required || state.videoSync || !state.sharedTranscripts;
-    state.canMakeColabKey = Boolean(auth.can_make_colab_key) && state.preparer;
+    state.canMakeColabKey = Boolean(auth.can_make_colab_key);
     $('colabKeyBtn').classList.toggle('d-none', !state.canMakeColabKey);
     $('saveStatus').title = auth.save_location === 'Box' ? 'Annotations are saved to Box' : `Annotations are saved on this computer in ${auth.save_location}`;
     if (auth.login_required) {
@@ -577,8 +574,7 @@ function renderTimingControls(savedOffset) {
     const update = () => {
         const shift = savedOffset - state.player.offset;   // + = video shown later than saved
         shown.textContent = Math.abs(shift) < 0.001 ? '' : `${shift > 0 ? '+' : ''}${shift.toFixed(1)} s`;
-        // Raters can try a shift to check it; saving it for everyone is for the project lead
-        save.classList.toggle('d-none', Math.abs(shift) < 0.001 || !state.preparer);
+        save.classList.toggle('d-none', Math.abs(shift) < 0.001);
     };
     const nudge = seconds => { state.player.nudge(seconds); update(); };
     save.addEventListener('click', async () => {
@@ -976,13 +972,10 @@ function renderTranscript() {
     source.className = `badge ms-1 ${shared ? 'bg-success' : 'bg-warning text-dark'}`;
     source.title = shared ? 'Every rater gets this same transcript from Box'
         : 'Not shared: other raters have a different transcript (or none)';
-    $('importBtn').classList.toggle('d-none', shared || !state.preparer);
+    $('importBtn').classList.toggle('d-none', shared);
     if (!all.length) {
         let howTo;
-        if (!state.preparer) {
-            howTo = ['The project lead adds transcripts; when this one is ready it appears here after you click ',
-                     el('strong', { text: 'Load' }), ' again.'];
-        } else if (state.sharedTranscripts) {
+        if (state.sharedTranscripts) {
             howTo = ['Click ', el('strong', { text: 'Copy Colab key' }), ' and run the Colab notebook. When it finishes, the transcript is added to Box for everyone; then click ',
                      el('strong', { text: 'Load' }), ' again. If you already have the file, use ', el('strong', { text: 'Import transcript' }), '.'];
         } else if (state.canMakeColabKey) {

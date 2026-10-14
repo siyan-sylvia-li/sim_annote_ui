@@ -17,7 +17,7 @@ fi
 # 2. Settings from the project lead's email: needed the first time, and again if they've changed
 needs_settings() {
     [ ! -f .env ] && return 0
-    for key in BOX_CLIENT_ID BOX_CLIENT_SECRET BOX_FOLDER_ID BOX_TRANSCRIPTS_FOLDER_ID; do
+    for key in BOX_CLIENT_ID BOX_CLIENT_SECRET BOX_FOLDER_ID BOX_TRANSCRIPTS_FOLDER_ID BOX_VIDEO_SESSIONS_FOLDER_ID; do
         grep -q "^$key=." .env || return 0
     done
     return 1

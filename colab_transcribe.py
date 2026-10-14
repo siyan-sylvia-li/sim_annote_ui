@@ -8,7 +8,9 @@ recording's files from Box, for about an hour, and nothing else. Then on Colab:
     python colab_transcribe.py --key "$CLC_KEY"      # or set CLC_KEY (e.g. with getpass)
     python colab_transcribe.py --audio file.wav ...  # audio already on this machine
 
-It writes <recording>.transcript.json to --out; load it in the app with "Import transcript".
+It writes <recording>.transcript.json to --out and, if the app has a shared transcripts folder
+set up (and your Box account can add files to it), uploads it there so every rater gets the same
+transcript. Otherwise, load the file in the app with "Import transcript".
 Per-person-mic recordings get their speakers from the file names; for single-mic recordings
 speakers are assigned in the app. The downloaded audio is deleted when the script finishes.
 """
@@ -74,6 +76,28 @@ def download_from_box(payload: dict, folder: Path) -> list:
     return files
 
 
+def share_in_box(upload: dict, transcript: dict) -> str:
+    """
+    Add the transcript to the shared Box folder with the key's upload-only token, unless the
+    recording already has one there (the first one stays the shared one).
+    Returns 'shared', 'exists' or a short reason it failed.
+    """
+    resp = requests.post('https://upload.box.com/api/2.0/files/content', timeout=120,
+                         headers={'Authorization': f"Bearer {upload['token']}"},
+                         files={'attributes': (None, json.dumps({'name': upload['name'], 'parent': {'id': upload['folder_id']}})),
+                                'file': (upload['name'], json.dumps(transcript, indent=2).encode(), 'application/json')})
+    if resp.status_code in (200, 201):
+        return 'shared'
+    if resp.status_code == 409:
+        return 'exists'
+    if resp.status_code == 401:
+        return 'the key expired before transcription finished'
+    try:
+        return resp.json().get('message') or f"HTTP {resp.status_code}"
+    except ValueError:
+        return f"HTTP {resp.status_code}"
+
+
 def local_files(paths: list, aliases: dict, work: Path) -> tuple:
     """
     Group local files the same way the app groups Box files. Returns (recording name, [{'role', 'path'}]).
@@ -131,7 +155,18 @@ def main():
         with open(path, 'w') as f:
             json.dump(transcript, f, indent=2)
         logger.info(f"Transcribed {len(transcript['segments'])} segments")
-        print(f"\nWrote {path}\nIn the app: open \"{recording}\" → Import transcript")
+        print(f"\nWrote {path}")
+        upload = payload.get('transcript_upload') if args.key else None
+        status = share_in_box(upload, transcript) if upload else None
+        if status == 'shared':
+            print(f'Added it to the shared transcripts folder in Box. In the app, load "{recording}" again to see it.')
+        elif status == 'exists':
+            print('A shared transcript for this recording was already in Box, so it was kept. '
+                  f'In the app, load "{recording}" again to use the shared one.')
+        else:
+            if status:
+                print(f'Could not add it to Box ({status}).')
+            print(f'In the app: open "{recording}" → Import transcript, and pick this file.')
     finally:
         # Don't leave session audio lying around on the Colab machine
         shutil.rmtree(work, ignore_errors=True)

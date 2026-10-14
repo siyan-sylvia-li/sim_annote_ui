@@ -384,6 +384,7 @@ async function init() {
     state.scheme = await (await fetchApi(`/api/scheme/${SCHEME_ID}`)).json();
     const auth = await (await fetchApi('/api/auth')).json();
     state.canMakeColabKey = Boolean(auth.can_make_colab_key);
+    state.sharedTranscripts = Boolean(auth.shared_transcripts);
     $('colabKeyBtn').classList.toggle('d-none', !state.canMakeColabKey);
     $('saveStatus').title = auth.save_location === 'Box' ? 'Annotations are saved to Box' : `Annotations are saved on this computer in ${auth.save_location}`;
     if (auth.login_required) {
@@ -812,14 +813,21 @@ async function loadTranscript() {
 }
 
 // Replaces the whole transcript (used for imports)
+// Saves an imported transcript; returns the server's reply (with `share_status` in Box mode), or null
 async function saveTranscript() {
     const resp = await fetchApi('/api/transcript', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ session: state.sessionId, ...state.transcript }),
     });
-    if (!resp.ok) { toast('Could not save transcript', 'danger'); return; }
-    state.transcript = await resp.json();
+    const data = await resp.json().catch(() => ({}));
+    if (!resp.ok) {
+        if (resp.status !== 401) toast(data.error || 'Could not save transcript', 'danger');
+        return null;
+    }
+    const { share_status: shareStatus, ...transcript } = data;
+    state.transcript = transcript;
+    return { shareStatus };
 }
 
 // Speaker changes and deletes are sent per segment, so raters editing at once don't overwrite each other
@@ -843,15 +851,28 @@ function renderTranscript() {
     list.innerHTML = '';
     const all = segments();
     $('segmentCount').textContent = all.length ? all.length : '';
+    // Shared transcripts come from Box and can't be replaced by an import
+    const shared = Boolean(state.transcript && state.transcript.box_file_id);
+    const source = $('transcriptSource');
+    source.textContent = shared ? 'Shared · Box' : (all.length && state.sharedTranscripts ? 'This computer only' : '');
+    source.className = `badge ms-1 ${shared ? 'bg-success' : 'bg-warning text-dark'}`;
+    source.title = shared ? 'Every rater gets this same transcript from Box'
+        : 'Not shared: other raters have a different transcript (or none)';
+    $('importBtn').classList.toggle('d-none', shared);
     if (!all.length) {
+        let howTo;
+        if (state.sharedTranscripts) {
+            howTo = ['Click ', el('strong', { text: 'Copy Colab key' }), ' and run the Colab notebook. When it finishes, the transcript is added to Box for everyone; then click ',
+                     el('strong', { text: 'Load' }), ' again. If you already have the file, use ', el('strong', { text: 'Import transcript' }), '.'];
+        } else if (state.canMakeColabKey) {
+            howTo = ['Make one on Colab (', el('strong', { text: 'Copy Colab key' }), ', then the notebook) and load it with ',
+                     el('strong', { text: 'Import transcript' }), '.'];
+        } else {
+            howTo = ['Make one with colab_transcribe.py on a GPU machine and load it with ', el('strong', { text: 'Import transcript' }), '.'];
+        }
         list.appendChild(el('div', { class: 'transcript-empty' },
-            el('p', { class: 'mb-1' }, 'No transcript for this session yet.'),
-            el('p', { class: 'small text-muted mb-0' },
-                state.canMakeColabKey ? 'Make one on Colab (' : 'Make one with colab_transcribe.py (',
-                state.canMakeColabKey ? el('strong', { text: 'Copy Colab key' }) : null,
-                state.canMakeColabKey ? ', then the notebook' : 'on a GPU machine',
-                ') and load it with ', el('strong', { text: 'Import transcript' }),
-                '. You can annotate from the recording and timeline either way.')));
+            el('p', { class: 'mb-1' }, state.sharedTranscripts ? 'No shared transcript for this recording yet.' : 'No transcript for this recording yet.'),
+            el('p', { class: 'small text-muted mb-0' }, ...howTo, ' You can annotate from the recording and timeline either way.')));
         return;
     }
     const filter = $('segmentFilter').value;
@@ -995,7 +1016,10 @@ async function copyColabKey() {
     const minutes = Math.round((data.expires_in || 3600) / 60);
     try {
         await navigator.clipboard.writeText(data.key);
-        toast(`Copied a Colab key for ${data.recording} (valid ~${minutes} min). Paste it into the notebook.`, 'success');
+        const shareNote = data.shares_transcript ? ' The transcript will be added to Box for everyone when it finishes.'
+            : data.transcripts_configured ? " Your Box account can't add files to the shared transcripts folder, so import the file Colab gives you." : '';
+        toast(`Copied a Colab key for ${data.recording} (valid ~${minutes} min). Paste it into the notebook.${shareNote}`,
+              data.transcripts_configured && !data.shares_transcript ? 'warning' : 'success');
     } catch (e) {
         // Clipboard can be blocked; show it to copy by hand instead
         prompt(`Colab key for ${data.recording} (valid ~${minutes} min). Copy it:`, data.key);
@@ -1019,14 +1043,24 @@ async function importTranscript(file) {
         && !confirm(`This transcript was made for "${data.recording}", but you have "${current}" open. Import it anyway?`)) return;
     if (segments().length && !confirm('Replace the current transcript with the imported one?')) return;
     const found = raw.map(s => s.speaker).filter(Boolean);
+    const previous = state.transcript;
     state.transcript = {
         source: 'import',
         speakers: [...new Set([...speakerList(), ...(data.speakers || []), ...found])],
         segments: raw,
     };
-    await saveTranscript();
+    const saved = await saveTranscript();
+    if (!saved) {
+        state.transcript = previous;
+        renderTranscript();
+        return;
+    }
     renderTranscript();
-    toast(`Imported ${segments().length} segments`, 'success');
+    const shareNote = {
+        shared: ' and shared in Box for all raters',
+        no_permission: ". Kept on this computer only: your Box account can't add files to the shared transcripts folder",
+    }[saved.shareStatus] || '';
+    toast(`Imported ${segments().length} segments${shareNote}`, saved.shareStatus === 'no_permission' ? 'warning' : 'success');
 }
 
 function setupTranscriptControls() {

@@ -234,6 +234,10 @@ class BoxStorage(Storage):
       downscoped to preview-only scopes on that one file, so it can't be used to download.
     * Transcription: `colab_key` hands colab_transcribe.py download-only tokens for one
       recording's files, so Colab can fetch the audio without the rater downloading anything.
+    * Shared transcripts: with `transcripts_folder_id`, each recording's transcript lives in that
+      Box folder so every rater works from the same one. The first transcript uploaded for a
+      recording (by Colab, or by "Import transcript") is the shared one and is never replaced.
+      Raters keep a local copy for their speaker edits; it's refreshed if Box has a different one.
     """
     requires_login = True
     player_type = 'box'
@@ -243,7 +247,7 @@ class BoxStorage(Storage):
     PREVIEW_SCOPES = 'base_preview item_preview'
 
     def __init__(self, client_id: str, client_secret: str, folder_id: str, redirect_uri: str,
-                 annotations_root: str, role_aliases: dict = None):
+                 annotations_root: str, role_aliases: dict = None, transcripts_folder_id: str = None):
         if not folder_id:
             raise ValueError('BOX_FOLDER_ID is required for Box storage')
         if not (client_id and client_secret):
@@ -252,6 +256,7 @@ class BoxStorage(Storage):
         self.client_id = client_id
         self.client_secret = client_secret
         self.folder_id = str(folder_id)
+        self.transcripts_folder_id = str(transcripts_folder_id) if transcripts_folder_id else None
         self.redirect_uri = redirect_uri
         self._access_token = None
         self._refresh_token = None
@@ -342,7 +347,7 @@ class BoxStorage(Storage):
 
         def walk(folder_id: str, path: str):
             for item in self._items(folder_id):
-                if item['type'] == 'folder':
+                if item['type'] == 'folder' and item['id'] != self.transcripts_folder_id:
                     walk(item['id'], f"{path}/{item['name']}" if path else item['name'])
                 elif item['type'] == 'file':
                     files.append({'id': item['id'], 'name': item['name'], 'folder': path, 'folder_key': folder_id})
@@ -353,14 +358,14 @@ class BoxStorage(Storage):
     def _file_source(self, file_id: str) -> dict:
         return {'file_id': file_id}
 
-    def _downscoped(self, file_id: str, scope: str) -> dict:
-        """Exchange the rater's token for one limited to `scope` on this one file."""
+    def _downscoped(self, file_id: str, scope: str, kind: str = 'files') -> dict:
+        """Exchange the rater's token for one limited to `scope` on this one file (or folder)."""
         resp = requests.post(self.TOKEN_URL, timeout=30, data={
             'grant_type': 'urn:ietf:params:oauth:grant-type:token-exchange',
             'subject_token': self._token(),
             'subject_token_type': 'urn:ietf:params:oauth:token-type:access_token',
             'scope': scope,
-            'resource': f"{self.API}/files/{file_id}",
+            'resource': f"{self.API}/{kind}/{file_id}",
         })
         if resp.status_code != 200:
             raise FileNotFoundError(file_id)
@@ -396,8 +401,78 @@ class BoxStorage(Storage):
             files.append({'id': f['id'], 'name': f['name'], 'role': f['role'], 'token': token['access_token']})
         payload = {'recording': rec['name'], 'session_id': session_id, 'kind': rec['kind'],
                    'expires_at': int(time.time()) + int(expires_in), 'files': files}
+        # Let Colab add the finished transcript to the shared folder: a token that can only
+        # upload into that one folder (it can't read, change or delete anything there)
+        will_share = self.transcripts_folder_id is not None and self._can_upload_transcripts()
+        if will_share:
+            token = self._downscoped(self.transcripts_folder_id, 'item_upload', kind='folders')
+            payload['transcript_upload'] = {'folder_id': self.transcripts_folder_id,
+                                            'name': self.transcript_file_name(session_id),
+                                            'token': token['access_token']}
         key = 'clc1.' + base64.urlsafe_b64encode(json.dumps(payload).encode()).decode().rstrip('=')
-        return {'key': key, 'recording': rec['name'], 'files': len(files), 'expires_in': expires_in}
+        return {'key': key, 'recording': rec['name'], 'files': len(files), 'expires_in': expires_in,
+                'shares_transcript': will_share, 'transcripts_configured': self.transcripts_folder_id is not None}
+
+    # ---------- Shared transcripts ----------
+
+    def transcript_file_name(self, session_id: str) -> str:
+        return f"{self._folder_name(session_id)}.transcript.json"
+
+    def _can_upload_transcripts(self) -> bool:
+        resp = self._request('GET', f"{self.API}/folders/{self.transcripts_folder_id}", params={'fields': 'permissions'})
+        _check(resp, 'read the shared transcripts folder')
+        return bool(resp.json().get('permissions', {}).get('can_upload', False))
+
+    def has_shared_transcript(self, session_id: str) -> bool:
+        return bool(self.transcripts_folder_id and self._shared_transcript_id(session_id))
+
+    def _shared_transcript_id(self, session_id: str):
+        name = self.transcript_file_name(session_id)
+        for item in self._items(self.transcripts_folder_id):
+            if item['type'] == 'file' and item['name'] == name:
+                return item['id']
+        return None
+
+    def load_transcript(self, session_id: str):
+        """The shared transcript from Box if there is one (kept locally with this rater's speaker edits), else the local copy."""
+        if not self.transcripts_folder_id:
+            return self.docs.load_transcript(session_id)
+        local = self.docs.load_transcript(session_id)
+        box_id = self._shared_transcript_id(session_id)
+        if not box_id:
+            return local
+        if local and local.get('box_file_id') == box_id:
+            return local
+        resp = self._request('GET', f"{self.API}/files/{box_id}/content")
+        _check(resp, 'read the shared transcript')
+        shared = resp.json()
+        shared['box_file_id'] = box_id
+        # The rater's own speaker edits start from the shared version
+        return self.docs.save_transcript(session_id, shared)
+
+    def share_transcript(self, session_id: str, transcript: dict) -> str:
+        """
+        Upload a transcript as the shared one for this recording, unless one already exists.
+        Returns 'shared', 'exists' (another transcript is already shared), 'no_permission' or
+        'not_configured'.
+        """
+        if not self.transcripts_folder_id:
+            return 'not_configured'
+        if self._shared_transcript_id(session_id):
+            return 'exists'
+        if not self._can_upload_transcripts():
+            return 'no_permission'
+        name = self.transcript_file_name(session_id)
+        body = {k: v for k, v in transcript.items() if k not in ('box_file_id', 'updated_at')}
+        resp = self._request('POST', 'https://upload.box.com/api/2.0/files/content',
+                             files={'attributes': (None, json.dumps({'name': name, 'parent': {'id': self.transcripts_folder_id}})),
+                                    'file': (name, json.dumps(body, indent=2).encode(), 'application/json')})
+        if resp.status_code == 409:
+            return 'exists'   # someone else shared one a moment ago
+        _check(resp, 'add the transcript to the shared folder')
+        box_id = resp.json()['entries'][0]['id']
+        self.docs.update_transcript(session_id, lambda t: t.update(box_file_id=box_id))
+        return 'shared'
 
 
 def new_oauth_state() -> str:

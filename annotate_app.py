@@ -94,7 +94,8 @@ def index():
 def auth_status():
     return jsonify({'login_required': storage.requires_login, 'authenticated': storage.is_authenticated(),
                     'save_location': storage.save_location,
-                    'can_make_colab_key': isinstance(storage, BoxStorage)})
+                    'can_make_colab_key': isinstance(storage, BoxStorage),
+                    'shared_transcripts': bool(getattr(storage, 'transcripts_folder_id', None))})
 
 
 @app.route('/box/login')
@@ -234,14 +235,25 @@ def save_transcript():
     if not isinstance(body.get('segments'), list):
         abort(400, 'Transcript must include a segments list')
     session_id = session_arg()
-    existing = storage.load_transcript(session_id) or {}
+    box = isinstance(storage, BoxStorage)
+    # Everyone works from the same transcript, so a shared one can't be replaced by an import
+    if box and storage.has_shared_transcript(session_id):
+        abort(409, 'This recording already has a shared transcript in Box, which everyone uses. '
+                   'Load the recording again to get it.')
+    existing = storage.docs.load_transcript(session_id) or {}
+    existing.pop('box_file_id', None)
     existing.update({
         'source': body.get('source', existing.get('source', 'import')),
         'speakers': body.get('speakers', existing.get('speakers', [])),
         'segments': normalize_segments(body['segments']),
     })
     saved = storage.save_transcript(session_id, existing)
-    return jsonify(saved)
+    # The first transcript for a recording becomes the shared one
+    share_status = storage.share_transcript(session_id, saved) if box else 'not_configured'
+    if share_status == 'shared':
+        saved = storage.docs.load_transcript(session_id)
+        logger.info(f"Shared the transcript for {session_id} in Box")
+    return jsonify({**saved, 'share_status': share_status})
 
 
 @app.route('/api/transcript/segment', methods=['PATCH'])
@@ -296,21 +308,27 @@ def main():
         storage = LocalStorage(args.media_root, args.annotations_root, role_aliases)
     else:
         # Accept a pasted folder URL or shared-link form ("…/folder/123?s=…") as well as the bare id
-        match = re.search(r'(?:folder/)?(\d+)', args.box_folder_id or '')
+        def folder_id(value):
+            match = re.search(r'(?:folder/)?(\d+)', value or '')
+            return match.group(1) if match else None
         try:
             storage = BoxStorage(
                 client_id=os.environ.get('BOX_CLIENT_ID'),
                 client_secret=os.environ.get('BOX_CLIENT_SECRET'),
-                folder_id=match.group(1) if match else None,
+                folder_id=folder_id(args.box_folder_id),
                 # Must match the redirect URI registered in the Box Developer Console
                 redirect_uri=os.environ.get('BOX_REDIRECT_URI', f"http://localhost:{args.port}/box/callback"),
                 annotations_root=args.annotations_root,
                 role_aliases=role_aliases,
+                # Box folder where each recording's shared transcript is kept (optional)
+                transcripts_folder_id=folder_id(os.environ.get('BOX_TRANSCRIPTS_FOLDER_ID')),
             )
         except ValueError as e:
             parser.error(str(e))
 
     logger.info(f"Annotations are saved to: {storage.save_location}")
+    if isinstance(storage, BoxStorage):
+        logger.info(f"Shared transcripts: {'Box folder ' + storage.transcripts_folder_id if storage.transcripts_folder_id else 'off (set BOX_TRANSCRIPTS_FOLDER_ID)'}")
     app.run(host=args.host, port=args.port, debug=args.debug)
 
 

@@ -155,8 +155,10 @@ The app lists **recordings**, grouped automatically from the files in the Box fo
 Whisper needs a GPU, so transcripts are made on Google Colab and then imported:
 
 1. In the app (signed in with Box), open the recording and click **Copy Colab key**. The key lets Colab download only that recording's files, for about an hour. The app first checks that Box allows your account to download them.
-2. Open `colab_transcribe.ipynb` in Colab, switch to a GPU runtime (**Runtime → Change runtime type → T4 GPU**), run the cells and paste the key when asked. It fetches the audio from Box, runs Whisper (`whisper_transcribe.py`), deletes the audio and downloads a `.transcript.json`.
-3. Back in the app, with the same recording open: **Import transcript**.
+2. Open `colab_transcribe.ipynb` in Colab, switch to a GPU runtime (**Runtime → Change runtime type → T4 GPU**), run the cells and paste the key when asked. It fetches the audio from Box, runs Whisper (`whisper_transcribe.py`), deletes the audio and produces a `.transcript.json`.
+3. With shared transcripts set up (below), Colab adds the transcript to Box and every rater gets it when they load the recording. Otherwise, download the file and use **Import transcript** in the app.
+
+**Shared transcripts:** set `BOX_TRANSCRIPTS_FOLDER_ID` in `.env` to a Box folder that whoever makes transcripts can edit and raters can view. The app then loads each recording's transcript from that folder, so all raters work from the same one. The first transcript for a recording (uploaded by Colab, or by **Import transcript** when none exists yet) is the shared one and is never replaced. Speaker changes a rater makes stay on their laptop.
 
 Recordings with one mic per person get their speakers from the file names; speech picked up on other people's mics is kept only where it was loudest (`transcription.py`). For single-mic recordings, assign speakers in the app. `colab_transcribe.py --audio <files>` also works on audio already on the machine.
 

@@ -543,6 +543,12 @@ function renderVideoBar(descriptor) {
             el('option', { value: 'video', text: 'Sound: camera' }));
         sound.addEventListener('change', () => state.player.setSound(sound.value));
         bar.append(el('i', { class: 'fas fa-video' }), camera, sound, renderTimingControls(descriptor.video.offset));
+        if (state.videoSync) {
+            // Running the sync again (e.g. after the alignment improved) adds a newer sync file, which is used instead
+            bar.appendChild(el('button', { class: 'btn btn-sm btn-outline-secondary ms-auto', onclick: () => copyVideoSyncKey(),
+                title: 'Copy a key to run the video sync notebook again for this recording' },
+                el('i', { class: 'fas fa-key' }), ' Re-sync'));
+        }
         if (descriptor.video.warning) {
             const c = descriptor.video.checks || {};
             const details = `Sound match: confidence ${c.sound_confidence ?? '?'}, ${c.sound_windows ?? '?'} windows agreed. `

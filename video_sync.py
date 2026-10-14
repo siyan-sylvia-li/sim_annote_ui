@@ -75,6 +75,32 @@ def onset_envelope(samples: np.ndarray, sample_rate: int = SAMPLE_RATE, bands: i
     return (flux - flux.mean()) / (flux.std() + 1e-9)
 
 
+def suppress_beats(envelope: np.ndarray, min_period: float = 0.3, max_period: float = 1.5, threshold: float = 0.1) -> np.ndarray:
+    """
+    Remove a steady beat (CPR compressions, a metronome, monitor beeps) from an onset envelope.
+    A beat makes the soundtracks line up equally well one beat early or late; speech doesn't
+    repeat on a fixed rhythm, so it survives. The beat period is found from the envelope's
+    autocorrelation; each frame then has the average of the frames one period either side
+    subtracted (a comb filter), blurred over +-1 frame since a beat is never perfectly steady.
+    """
+    e = envelope - envelope.mean()
+    n = len(e)
+    lo, hi = int(min_period / HOP), int(max_period / HOP)
+    if n < 4 * hi:
+        return envelope
+    spectrum = np.fft.rfft(e, 2 * n)
+    auto = np.fft.irfft(spectrum * np.conj(spectrum))[:hi + 1]
+    auto /= auto[0] + 1e-9
+    period = lo + int(np.argmax(auto[lo:hi + 1]))
+    if auto[period] < threshold:
+        return envelope            # no steady beat
+    neighbours = np.zeros_like(e)
+    for p in (period - 1, period, period + 1):
+        neighbours += np.roll(e, p) + np.roll(e, -p)
+    out = e - neighbours / 6
+    return (out - out.mean()) / (out.std() + 1e-9)
+
+
 def _correlate(a: np.ndarray, v: np.ndarray):
     """corr[i] = sum_t a[t] * v[t + lag_i] for every lag where the two overlap; returns (lags, corr)."""
     n = len(a) + len(v) - 1
@@ -102,17 +128,8 @@ def _peak(lags: np.ndarray, corr: np.ndarray):
     return lags[i] + shift, float(z)
 
 
-def align(audio_env: np.ndarray, video_env: np.ndarray, window: float = 90.0, step: float = 30.0,
-          search: float = 3.0) -> dict:
-    """
-    Offset and rate such that video_time = offset + rate * audio_time.
-    Returns {'offset', 'rate', 'confidence', 'windows' (how many 90-second checks agreed)}.
-    """
-    lags, corr = _correlate(audio_env, video_env)
-    lag, confidence = _peak(lags, corr)
-    offset = lag * HOP
-
-    # Refine in windows along the recording: each gives the local offset at its middle
+def _windowed(audio_env: np.ndarray, video_env: np.ndarray, lag: float, window: float, step: float, search: float) -> list:
+    """Local offset (seconds) at the middle of each window along the audio, searching +-`search` s around `lag` (frames)."""
     win, hop_w, srch = int(window / HOP), int(step / HOP), int(search / HOP)
     points = []
     for start in range(0, max(len(audio_env) - win, 0) + 1, hop_w):
@@ -125,31 +142,71 @@ def align(audio_env: np.ndarray, video_env: np.ndarray, window: float = 90.0, st
         keep = (w_lags >= 0) & (w_lags <= 2 * srch)
         w_lag, w_z = _peak(w_lags[keep], w_corr[keep])
         if w_z >= 5:
-            middle = (start + win / 2) * HOP
-            points.append((middle, (v_start + w_lag - start) * HOP))
+            points.append(((start + win / 2) * HOP, (v_start + w_lag - start) * HOP))
+    return points
 
-    rate = 1.0
-    if len(points) >= 3:
-        t, o = np.array(points).T
-        # Fit a line, drop windows far from it, refit with a tighter limit. Measuring against the
-        # line (not the median) keeps the early and late windows, which is where drift shows.
-        good = np.abs(o - np.median(o)) < 1.0
-        for limit in (0.5, 0.2, 0.08):
-            if good.sum() < 3:
-                break
-            slope, intercept = np.polyfit(t[good], o[good], 1)
-            good = np.abs(o - (intercept + slope * t)) < limit
-        if good.sum() >= 3:
-            slope, intercept = np.polyfit(t[good], o[good], 1)
-            span = t[good].max() - t[good].min()
-            # Real clock drift is tiny (well under 0.1%); anything bigger is a bad fit. Drift that
-            # moves the video by under 30 ms over the whole recording is just measurement noise.
-            if abs(slope) < 1e-3 and abs(slope) * span >= 0.03:
-                offset, rate = float(intercept), 1.0 + float(slope)
-            else:
-                offset = float(np.median(o[good]))
-        points = [p for p, g in zip(points, good) if g]
-    return {'offset': float(offset), 'rate': float(rate), 'confidence': confidence, 'windows': len(points)}
+
+def _fit(points: list, fallback_offset: float):
+    """Offset and rate from window offsets: a line fitted with outliers dropped. Returns (offset, rate, windows used)."""
+    offset, rate = fallback_offset, 1.0
+    if len(points) < 3:
+        return offset, rate, len(points)
+    t, o = np.array(points).T
+    # Fit a line, drop windows far from it, refit with a tighter limit. Measuring against the
+    # line (not the median) keeps the early and late windows, which is where drift shows.
+    good = np.abs(o - np.median(o)) < 1.0
+    for limit in (0.5, 0.2, 0.08):
+        if good.sum() < 3:
+            break
+        slope, intercept = np.polyfit(t[good], o[good], 1)
+        good = np.abs(o - (intercept + slope * t)) < limit
+    if good.sum() >= 3:
+        slope, intercept = np.polyfit(t[good], o[good], 1)
+        span = t[good].max() - t[good].min()
+        # Real clock drift is tiny (well under 0.1%); anything bigger is a bad fit. Drift that
+        # moves the video by under 30 ms over the whole recording is just measurement noise.
+        if abs(slope) < 1e-3 and abs(slope) * span >= 0.03:
+            offset, rate = float(intercept), 1.0 + float(slope)
+        else:
+            offset = float(np.median(o[good]))
+    return offset, rate, int(good.sum())
+
+
+def _top_peaks(lags: np.ndarray, corr: np.ndarray, count: int = 5, spacing: float = 0.25) -> list:
+    """The strongest correlation peaks at least `spacing` s apart: [(offset s, z-score)]; for diagnosing."""
+    z = (corr - corr.mean()) / (corr.std() + 1e-9)
+    order = np.argsort(corr)[::-1]
+    peaks = []
+    for i in order:
+        if all(abs(lags[i] - p) * HOP >= spacing for p, _ in peaks):
+            peaks.append((lags[i], z[i]))
+        if len(peaks) == count:
+            break
+    return [(round(float(p * HOP), 3), round(float(v), 1)) for p, v in peaks]
+
+
+def align(audio_env: np.ndarray, video_env: np.ndarray, window: float = 90.0, step: float = 30.0,
+          search: float = 3.0) -> dict:
+    """
+    Offset and rate such that video_time = offset + rate * audio_time, searching every lag.
+    Returns {'offset', 'rate', 'confidence', 'windows' (how many 90-second checks agreed), 'peaks'}.
+    """
+    lags, corr = _correlate(audio_env, video_env)
+    lag, confidence = _peak(lags, corr)
+    offset, rate, windows = _fit(_windowed(audio_env, video_env, lag, window, step, search), lag * HOP)
+    return {'offset': float(offset), 'rate': float(rate), 'confidence': confidence, 'windows': windows,
+            'peaks': _top_peaks(lags, corr)}
+
+
+def refine_near(audio_env: np.ndarray, video_env: np.ndarray, guess: float, search: float = 1.5,
+                window: float = 90.0, step: float = 30.0) -> dict:
+    """
+    Precise offset/rate by matching the sound only within +-`search` s of `guess` (e.g. from matched
+    spoken lines). Repeating sounds (beeps, compressions) can make the full search pick a spot one
+    beat off; anchoring near a rough estimate avoids that.
+    """
+    offset, rate, windows = _fit(_windowed(audio_env, video_env, guess / HOP, window, step, search), guess)
+    return {'offset': float(offset), 'rate': float(rate), 'windows': windows}
 
 
 def word_offsets(audio_segments: list, video_segments: list, min_chars: int = 15, min_similarity: float = 0.75) -> list:

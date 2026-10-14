@@ -172,14 +172,18 @@ def upload_file(token: str, folder_id: str, path: Path) -> str:
 
 # ---------- Alignment ----------
 
-def decide(sound: dict, words: dict, video_seconds: float, audio_seconds: float) -> dict:
+def decide(sound: dict, words: dict, video_seconds: float, audio_seconds: float, near_words: dict = None) -> dict:
     """Pick the alignment to save and say how sure it is."""
     confident = sound['confidence'] >= 8 and sound['windows'] >= 3
     sync = {'offset': sound['offset'], 'rate': sound['rate'], 'method': 'sound', 'warning': None}
     if words['agrees'] is False and words['matches'] >= 5:
-        # The spoken words clearly disagree with the sound match: trust the words
-        sync.update(offset=words['offset'], rate=1.0, method='spoken words',
-                    warning='Lined up by matching spoken words only; check that the video looks in sync.')
+        # The spoken words disagree with the full sound search (e.g. it locked on one beat off).
+        # Words are only rough (~0.5 s), so match the sound again, but only near the words' estimate.
+        if near_words and near_words['windows'] >= 3:
+            sync.update(offset=near_words['offset'], rate=near_words['rate'], method='sound, near spoken words')
+        else:
+            sync.update(offset=words['offset'], rate=1.0, method='spoken words',
+                        warning='Lined up by matching spoken words only; check that the video looks in sync.')
     elif not confident and words['agrees'] is not True:
         sync['warning'] = "Couldn't confirm the alignment; check that the video looks in sync."
     covered = min(video_seconds, sync['offset'] + sync['rate'] * audio_seconds) - max(0.0, sync['offset'])
@@ -213,9 +217,12 @@ def main():
         audio_seconds = len(audio) / video_sync.SAMPLE_RATE
         video_seconds = duration(videos[0])
         logger.info('Matching the sound of the video against the audio...')
-        sound = video_sync.align(video_sync.onset_envelope(audio), video_sync.onset_envelope(video_audio))
+        # Steady beats (CPR, metronome, monitor) would make one-beat-off positions match nearly as well
+        audio_env = video_sync.suppress_beats(video_sync.onset_envelope(audio))
+        video_env = video_sync.suppress_beats(video_sync.onset_envelope(video_audio))
+        sound = video_sync.align(audio_env, video_env)
         logger.info(f"  offset {sound['offset']:.3f} s, rate {sound['rate']:.6f}, confidence {sound['confidence']:.0f}, "
-                    f"{sound['windows']} windows agree")
+                    f"{sound['windows']} windows agree; best candidates {sound['peaks']}")
 
         # 3. Cross-check by matching spoken lines
         words = {'matches': 0, 'agrees': None, 'offset': None}
@@ -232,10 +239,16 @@ def main():
                 audio_segments = transcribe_small(wav)
             pairs = video_sync.word_offsets(audio_segments, transcribe_small(videos[0]))
             words = video_sync.check_with_words(sound, pairs)
-            logger.info(f"  {words['matches']} matching lines; "
+            logger.info(f"  {words['matches']} matching lines, offset {words['offset']}; "
                         f"{'agrees' if words['agrees'] else 'disagrees' if words['agrees'] is False else 'not enough to tell'}")
 
-        chosen = decide(sound, words, video_seconds, audio_seconds)
+        near_words = None
+        if words['agrees'] is False and words['offset'] is not None:
+            near_words = video_sync.refine_near(audio_env, video_env, words['offset'])
+            logger.info(f"  sound matched near the spoken words: offset {near_words['offset']:.3f} s, "
+                        f"{near_words['windows']} windows agree")
+
+        chosen = decide(sound, words, video_seconds, audio_seconds, near_words)
         sync = {
             'recording': payload['recording'], 'session_id': payload['session_id'],
             'video_folder_id': payload['upload_videos']['folder_id'],
@@ -244,9 +257,12 @@ def main():
             'offset': round(chosen['offset'], 4), 'rate': chosen['rate'],
             'video_duration': round(video_seconds, 3), 'audio_duration': round(audio_seconds, 3),
             'method': chosen['method'], 'warning': chosen['warning'],
-            'checks': {'sound_confidence': round(sound['confidence'], 1), 'sound_windows': sound['windows'],
-                       'word_matches': words['matches'], 'words_agree': words['agrees'],
-                       'word_offset': words['offset']},
+            'checks': {'sound_offset': round(sound['offset'], 4), 'sound_rate': sound['rate'],
+                       'sound_confidence': round(sound['confidence'], 1), 'sound_windows': sound['windows'],
+                       'sound_candidates': sound['peaks'],
+                       'word_matches': words['matches'], 'words_agree': words['agrees'], 'word_offset': words['offset'],
+                       'near_words_offset': round(near_words['offset'], 4) if near_words else None,
+                       'near_words_windows': near_words['windows'] if near_words else None},
             'created_at': datetime.now(timezone.utc).isoformat(),
         }
 

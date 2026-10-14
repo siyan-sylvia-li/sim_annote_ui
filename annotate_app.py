@@ -240,6 +240,21 @@ def video_sync_key():
     return jsonify(key)
 
 
+@app.route('/api/video_sync_adjust', methods=['POST'])
+def video_sync_adjust():
+    """Save a manual correction of the video timing for everyone (a new sync file)."""
+    body = request.get_json(silent=True) or {}
+    session_id = session_arg()
+    if not isinstance(body.get('offset'), (int, float)):
+        abort(400, 'offset is required')
+    try:
+        sync = storage.adjust_sync(session_id, body['offset'], str(body.get('rater', '')).strip() or 'unknown')
+    except FileNotFoundError:
+        abort(404, 'This recording has no linked video')
+    logger.info(f"Video timing for {session_id} adjusted to {sync['offset']} s (was {sync['adjusted_from']})")
+    return jsonify({'offset': sync['offset']})
+
+
 @app.route('/api/transcript', methods=['GET'])
 def get_transcript():
     return jsonify(storage.load_transcript(session_arg()))

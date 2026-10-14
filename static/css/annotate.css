@@ -72,10 +72,12 @@ body {
 /* Synced video above the audio bar */
 .video-wrap { position: relative; flex-shrink: 1; min-height: 220px; display: flex; }
 .video-wrap .player-container { width: 100%; }
+.video-click { position: absolute; inset: 0; cursor: pointer; z-index: 2; }
 .video-gap {
-    position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; gap: 8px;
-    background: rgba(17, 24, 39, 0.85); color: #e5e7eb; border-radius: 8px; font-size: 14px; pointer-events: none;
+    position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px;
+    background: rgba(17, 24, 39, 0.85); color: #e5e7eb; border-radius: 8px; font-size: 14px; z-index: 3;
 }
+.video-gap button { pointer-events: auto; }
 /* With a video above it, the audio player is only the sound: the transport controls drive it.
    It stays in the page (a hidden player may not play) but takes no room. */
 .player-container.audio-only.with-video { height: 1px; min-height: 1px; opacity: 0; margin-top: -8px; overflow: hidden; }
@@ -85,6 +87,8 @@ body {
 }
 .video-bar select { width: auto; }
 .video-bar .warn-text { color: #7a5b00; }
+.timing-controls { display: inline-flex; align-items: center; gap: 4px; margin-left: 4px; color: var(--muted); }
+.timing-shift { font-variant-numeric: tabular-nums; color: var(--accent); min-width: 3.5em; }
 
 /* Audio-only recordings: a slim bar instead of a 16:9 video area, leaving room for the transcript */
 .player-container.audio-only { aspect-ratio: auto; height: 96px; min-height: 96px; background: #1f2937; position: relative; }

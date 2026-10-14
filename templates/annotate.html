@@ -38,7 +38,9 @@
             <!-- Synced video for an audio recording (muted; the audio below is the clock) -->
             <div id="videoWrap" class="video-wrap d-none">
                 <div id="videoContainer" class="player-container"></div>
-                <div id="videoGap" class="video-gap d-none"><i class="fas fa-video-slash"></i> No video for this part of the recording</div>
+                <!-- Clicks on the picture play/pause everything (Box's own play button would only start the video) -->
+                <div id="videoClick" class="video-click" title="Play / pause"></div>
+                <div id="videoGap" class="video-gap d-none"></div>
             </div>
             <div id="playerContainer" class="player-container"></div>
             <!-- Camera / sound pickers when there's a synced video; "Copy video sync key" when there isn't -->

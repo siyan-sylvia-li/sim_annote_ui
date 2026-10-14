@@ -486,6 +486,7 @@ async function loadSession() {
         const audio = createPlayer(container, descriptor, sessionId);
         const video = createPlayer($('videoContainer'), { type: descriptor.type, sources: descriptor.video.sources }, sessionId);
         state.player = new SyncedPlayer(audio, video, descriptor.video, $('videoGap'));
+        $('videoClick').onclick = () => togglePlay();
     } else {
         state.player = createPlayer(container, descriptor, sessionId);
     }
@@ -541,8 +542,14 @@ function renderVideoBar(descriptor) {
             el('option', { value: 'audio', text: 'Sound: audio recording' }),
             el('option', { value: 'video', text: 'Sound: camera' }));
         sound.addEventListener('change', () => state.player.setSound(sound.value));
-        bar.append(el('i', { class: 'fas fa-video' }), camera, sound);
-        if (descriptor.video.warning) bar.appendChild(el('span', { class: 'warn-text' }, el('i', { class: 'fas fa-triangle-exclamation' }), ` ${descriptor.video.warning}`));
+        bar.append(el('i', { class: 'fas fa-video' }), camera, sound, renderTimingControls(descriptor.video.offset));
+        if (descriptor.video.warning) {
+            const c = descriptor.video.checks || {};
+            const details = `Sound match: confidence ${c.sound_confidence ?? '?'}, ${c.sound_windows ?? '?'} windows agreed. `
+                + `Spoken lines matched: ${c.word_matches ?? '?'}${c.words_agree === false ? ' (disagreed with the sound match)' : ''}. `
+                + `Video starts ${Math.abs(descriptor.video.offset).toFixed(1)} s ${descriptor.video.offset < 0 ? 'after' : 'before'} the audio.`;
+            bar.appendChild(el('span', { class: 'warn-text', 'data-tip': details }, el('i', { class: 'fas fa-triangle-exclamation' }), ` ${descriptor.video.warning}`));
+        }
         bar.classList.remove('d-none');
     } else if (state.videoSync && rec && rec.kind !== 'video') {
         bar.append(el('span', { class: 'text-muted' }, el('i', { class: 'fas fa-video-slash' }), ' No video linked to this recording yet.'),
@@ -552,6 +559,35 @@ function renderVideoBar(descriptor) {
     } else {
         bar.classList.add('d-none');
     }
+}
+
+// Fine-tune when the video plays against the audio, then save it for everyone (a new sync file)
+function renderTimingControls(savedOffset) {
+    const shown = el('span', { class: 'timing-shift' });
+    const save = el('button', { class: 'btn btn-sm btn-primary d-none', title: 'Save this timing so every rater gets it' }, 'Save for everyone');
+    const update = () => {
+        const shift = savedOffset - state.player.offset;   // + = video shown later than saved
+        shown.textContent = Math.abs(shift) < 0.001 ? '' : `${shift > 0 ? '+' : ''}${shift.toFixed(1)} s`;
+        save.classList.toggle('d-none', Math.abs(shift) < 0.001);
+    };
+    const nudge = seconds => { state.player.nudge(seconds); update(); };
+    save.addEventListener('click', async () => {
+        const resp = await fetchApi('/api/video_sync_adjust', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ session: state.sessionId, offset: state.player.offset, rater: state.rater }),
+        });
+        const data = await resp.json().catch(() => ({}));
+        if (!resp.ok) { if (resp.status !== 401) toast(data.error || 'Could not save the video timing', 'danger'); return; }
+        savedOffset = data.offset;
+        update();
+        $('videoBar').querySelector('.warn-text')?.remove();
+        toast('Saved the video timing for everyone', 'success');
+    });
+    return el('span', { class: 'timing-controls', 'data-tip': 'If the video looks early or late against the sound, shift it here' },
+        'Video timing',
+        el('button', { class: 'btn btn-sm btn-light', title: 'Show the video 0.1 s earlier', onclick: () => nudge(-0.1) }, '− 0.1 s'),
+        el('button', { class: 'btn btn-sm btn-light', title: 'Show the video 0.1 s later', onclick: () => nudge(0.1) }, '+ 0.1 s'),
+        shown, save);
 }
 
 // A key for the video sync notebook: this recording's audio + its session's zip, for about an hour

@@ -63,6 +63,7 @@ class Html5Player {
     }
 
     setMuted(muted) { this.video.muted = muted; }
+    element() { return this.video; }
 
     destroy() {
         if (this.video) {
@@ -193,6 +194,8 @@ class BoxPreviewPlayer {
         if (this.media) this.media.muted = muted;
     }
 
+    element() { return this.media; }
+
     destroy() {
         if (this.preview) this.preview.destroy();
         this.preview = null;
@@ -216,6 +219,8 @@ class SyncedPlayer {
         this.timer = null;
         this.playbackRate = 1;
         this.videoError = null;
+        this.wantPlaying = false;   // what the user asked for; the audio may be held while the video loads
+        this.holdingSince = null;
         // Clicking the picture plays/pauses everything, not just the video
         audio.onClick = video.onClick = () => this.togglePlay();
     }
@@ -229,28 +234,111 @@ class SyncedPlayer {
         await this.audio.load();
         // A video that won't load shouldn't stop annotation: carry on with the audio alone
         try { await this.video.load(); } catch (err) { this.videoError = err; }
+        this.watchVideo();
         this.applySound();
         this.timer = setInterval(() => this.follow(false), 200);
         this.follow(true);
     }
 
+    // React as soon as the video has loaded after a jump, rather than at the next tick
+    watchVideo() {
+        const el = this.video.element && this.video.element();
+        if (!el || el === this.watched) return;
+        this.watched = el;
+        for (const name of ['canplay', 'seeked', 'playing', 'waiting']) el.addEventListener(name, () => this.follow(false));
+    }
+
     videoTime(audioTime) { return this.offset + this.rate * audioTime; }
 
-    // Keep the video where the audio says it should be (within 0.15 s), and running when the audio runs
+    videoReady() {
+        const el = this.video.element && this.video.element();
+        return !el || (!el.seeking && el.readyState >= 3);
+    }
+
+    // Keep the video where the audio says it should be. Big differences (a jump) seek the video and
+    // hold the audio until the video can play; small drift is corrected by nudging the video's speed,
+    // because seeking makes it stop and reload.
     follow(force) {
-        if (this.videoError) return;
-        const vt = this.videoTime(this.audio.getTime());
-        const inside = vt >= 0 && vt < (this.video.getDuration() || Infinity) - 0.05;
-        if (this.gapEl) this.gapEl.classList.toggle('d-none', inside);
-        this.applySound(inside);
-        if (!inside) {
-            if (this.video.isPlaying()) this.video.pause();
-            if (force && this.video.getDuration()) this.video.seek(vt < 0 ? 0 : this.video.getDuration());
+        if (this.videoError) {
+            if (this.wantPlaying && !this.audio.isPlaying() && !this.atEnd()) this.audio.play();
             return;
         }
-        if (force || Math.abs(this.video.getTime() - vt) > 0.15) this.video.seek(vt);
-        if (this.audio.isPlaying() && !this.video.isPlaying()) this.video.play();
-        if (!this.audio.isPlaying() && this.video.isPlaying()) this.video.pause();
+        const at = this.audio.getTime();
+        const vt = this.videoTime(at);
+        const inside = vt >= 0 && vt < (this.video.getDuration() || Infinity) - 0.05;
+        this.applySound(inside);
+        if (this.wantPlaying && this.atEnd()) this.wantPlaying = false;
+
+        if (!inside) {
+            this.showGap(vt < 0 ? 'before' : 'after');
+            this.holdingSince = null;
+            if (this.video.isPlaying()) this.video.pause();
+            if (force && this.video.getDuration()) this.video.seek(vt < 0 ? 0 : this.video.getDuration());
+            if (this.wantPlaying && !this.audio.isPlaying()) this.audio.play();
+            if (!this.wantPlaying && this.audio.isPlaying()) this.audio.pause();
+            return;
+        }
+
+        const drift = this.video.getTime() - vt;
+        if (force || Math.abs(drift) > 1.0) this.video.seek(vt);
+
+        if (!this.wantPlaying) {
+            this.showGap(null);
+            this.holdingSince = null;
+            if (this.audio.isPlaying()) this.audio.pause();
+            if (this.video.isPlaying()) this.video.pause();
+            return;
+        }
+
+        if (!this.videoReady()) {
+            // The video is loading: hold the audio so they start together (but not forever)
+            if (this.holdingSince === null) this.holdingSince = Date.now();
+            if (Date.now() - this.holdingSince < 4000) {
+                if (this.audio.isPlaying()) this.audio.pause();
+                this.showGap('loading');
+                return;
+            }
+        } else {
+            this.holdingSince = null;
+        }
+        this.showGap(null);
+        if (!this.audio.isPlaying()) this.audio.play();
+        if (!this.video.isPlaying()) this.video.play();
+        const base = this.playbackRate * this.rate;
+        // Up to 12% faster/slower: closes a 0.1 s gap in about a second, and isn't noticeable on muted video
+        const correction = Math.abs(drift) > 0.03 ? Math.max(-0.12, Math.min(0.12, drift * 1.0)) : 0;
+        this.video.setRate(base * (1 - correction));
+    }
+
+    atEnd() {
+        const d = this.audio.getDuration();
+        return d > 0 && this.audio.getTime() >= d - 0.05;
+    }
+
+    // Cover the picture: before/after the cameras were recording, or while the video loads
+    showGap(state) {
+        if (!this.gapEl) return;
+        this.gapEl.classList.toggle('d-none', !state);
+        if (!state || this.gapEl.dataset.state === state) return;
+        this.gapEl.dataset.state = state;
+        this.gapEl.innerHTML = '';
+        const note = document.createElement('div');
+        if (state === 'loading') {
+            note.innerHTML = '<span class="spinner-border spinner-border-sm"></span> Loading video…';
+            this.gapEl.append(note);
+        } else if (state === 'before') {
+            const start = Math.max(0, -this.offset / this.rate);
+            note.innerHTML = '<i class="fas fa-video-slash"></i> ';
+            note.append(`The video starts at ${formatTime(start)} in this recording`);
+            const jump = document.createElement('button');
+            jump.className = 'btn btn-sm btn-light';
+            jump.textContent = `Jump to ${formatTime(start)}`;
+            jump.addEventListener('click', e => { e.stopPropagation(); this.seek(start + 0.05); });
+            this.gapEl.append(note, jump);
+        } else {
+            note.innerHTML = '<i class="fas fa-video-slash"></i> The video has ended; the audio continues';
+            this.gapEl.append(note);
+        }
     }
 
     // Camera sound only while the camera has footage; otherwise fall back to the audio
@@ -262,10 +350,10 @@ class SyncedPlayer {
 
     setSound(which) { this.sound = which; this.follow(false); }
 
-    play() { this.audio.play(); this.follow(true); }
-    pause() { this.audio.pause(); this.video.pause(); }
+    play() { this.wantPlaying = true; this.follow(false); }
+    pause() { this.wantPlaying = false; this.audio.pause(); this.video.pause(); this.follow(false); }
     togglePlay() { this.isPlaying() ? this.pause() : this.play(); }
-    isPlaying() { return this.audio.isPlaying(); }
+    isPlaying() { return this.wantPlaying; }
     seek(seconds) { this.audio.seek(seconds); this.follow(true); }
     getTime() { return this.audio.getTime(); }
     getDuration() { return this.audio.getDuration(); }
@@ -278,6 +366,9 @@ class SyncedPlayer {
 
     setMuted(muted) { this.audio.setMuted(muted); }
 
+    // Shift the video against the audio (a manual correction), in seconds; positive = video later
+    nudge(seconds) { this.offset -= seconds; this.follow(true); }
+
     async switchSource(index) {
         await this.audio.switchSource(index);
         this.follow(true);
@@ -285,6 +376,7 @@ class SyncedPlayer {
 
     async switchCamera(index) {
         await this.video.switchSource(index);
+        this.watchVideo();
         this.video.setRate(this.playbackRate * this.rate);
         this.follow(true);
     }

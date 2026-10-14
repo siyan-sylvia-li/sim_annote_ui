@@ -165,6 +165,21 @@ class Storage(ABC):
         """
         return []
 
+    def _store_sync(self, base_name: str, sync: dict):
+        """Save a new sync file (never replacing an old one; the newest is used)."""
+        raise NotImplementedError
+
+    def adjust_sync(self, session_id: str, offset: float, rater: str) -> dict:
+        """A manual correction of when the video plays against the audio, saved for everyone as a new sync file."""
+        current = next((s for s in self._sync_infos() if s.get('session_id') == session_id), None)
+        if not current:
+            raise FileNotFoundError(session_id)
+        sync = {**current, 'offset': round(float(offset), 3), 'method': 'manual adjustment', 'warning': None,
+                'adjusted_from': current.get('offset'), 'adjusted_by': rater, 'created_at': _now()}
+        self._store_sync(f"{self._folder_name(session_id)}.sync", sync)
+        self.recording(session_id)['video'].update(offset=sync['offset'], warning=None, method=sync['method'])
+        return sync
+
     def list_sessions(self) -> list:
         """Every annotatable recording: [{'id', 'name', 'kind', 'has_video'}] (kind: video, audio or role_tracks)."""
         media = self._media_files()
@@ -191,7 +206,8 @@ class Storage(ABC):
             if not files:
                 continue   # sync file made, but the camera files aren't in Box (yet)
             rec['video'] = {'files': files, 'offset': float(sync.get('offset', 0.0)), 'rate': float(sync.get('rate', 1.0)),
-                            'duration': sync.get('video_duration'), 'warning': sync.get('warning')}
+                            'duration': sync.get('video_duration'), 'warning': sync.get('warning'),
+                            'method': sync.get('method'), 'checks': sync.get('checks')}
             linked.update(f['id'] for f in files)
         recordings[:] = [r for r in recordings if not ({f['id'] for f in r['files']} <= linked)]
 
@@ -218,7 +234,8 @@ class Storage(ABC):
             # A synced video shown alongside the audio (which stays the clock and the sound)
             v = rec['video']
             player['video'] = {'sources': [{'label': f['label'], **self._file_source(f['id'])} for f in v['files']],
-                               'offset': v['offset'], 'rate': v['rate'], 'duration': v['duration'], 'warning': v['warning']}
+                               'offset': v['offset'], 'rate': v['rate'], 'duration': v['duration'], 'warning': v['warning'],
+                               'method': v['method'], 'checks': v['checks']}
         return player
 
     def load_annotations(self, session_id: str, rater: str):
@@ -269,11 +286,19 @@ class LocalStorage(Storage):
     def _sync_infos(self) -> list:
         # Same layout as Box: sync files sit in a 'transcripts' folder under the media root
         latest = {}
-        for path in sorted((self.media_root / 'transcripts').glob('*.sync*.json'), key=lambda p: p.stat().st_mtime):
+        for path in sorted((self.media_root / 'transcripts').glob('*.sync*.json'), key=lambda p: (p.stat().st_mtime, p.name)):
             with open(path) as f:
                 sync = json.load(f)
             latest[sync.get('session_id')] = sync
         return list(latest.values())
+
+    def _store_sync(self, base_name: str, sync: dict):
+        folder = self.media_root / 'transcripts'
+        n, path = 1, folder / f"{base_name}.json"
+        while path.exists():
+            n += 1
+            path = folder / f"{base_name}.{n}.json"
+        _write_json(path, sync)
 
 
 class BoxStorage(Storage):
@@ -493,6 +518,20 @@ class BoxStorage(Storage):
             sync = self._sync_cache[item['id']]
             latest[sync.get('session_id')] = sync
         return list(latest.values())
+
+    def _store_sync(self, base_name: str, sync: dict):
+        if not self._can_upload_transcripts():
+            raise BoxAPIError(403, 'can_upload_not_allowed',
+                              "your Box account can't add files to the shared transcripts folder", 'save the video timing')
+        existing = {i['name'] for i in self._items(self.transcripts_folder_id) if i['type'] == 'file'}
+        n, name = 1, f"{base_name}.json"
+        while name in existing:
+            n += 1
+            name = f"{base_name}.{n}.json"
+        resp = self._request('POST', 'https://upload.box.com/api/2.0/files/content',
+                             files={'attributes': (None, json.dumps({'name': name, 'parent': {'id': self.transcripts_folder_id}})),
+                                    'file': (name, json.dumps(sync, indent=2).encode(), 'application/json')})
+        _check(resp, 'save the video timing')
 
     def _require_permission(self, kind: str, item_id: str, permission: str, message: str):
         resp = self._request('GET', f"{self.API}/{kind}/{item_id}", params={'fields': 'permissions'})

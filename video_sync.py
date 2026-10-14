@@ -237,5 +237,7 @@ def check_with_words(sync: dict, pairs: list, tolerance: float = 1.0) -> dict:
     a, v = np.array(pairs).T
     errors = v - (sync['offset'] + sync['rate'] * a)
     word_offset = float(np.median(v - a))
-    agrees = bool(np.median(np.abs(errors)) < tolerance) if len(pairs) >= 3 else None
+    # Compare the typical (median) error, not the typical size of the error: a phrase said several
+    # times ("check a pulse") can be matched to the wrong occurrence, giving a few huge errors
+    agrees = bool(abs(np.median(errors)) < tolerance) if len(pairs) >= 3 else None
     return {'matches': len(pairs), 'agrees': agrees, 'offset': word_offset}

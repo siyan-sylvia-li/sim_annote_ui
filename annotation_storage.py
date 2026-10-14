@@ -557,8 +557,9 @@ class BoxStorage(Storage):
         """
         A key for colab_sync.py: download-only tokens for this recording's audio and its session's
         video zip, upload-only tokens for the recording's audio folder (camera files) and the
-        transcripts folder (the sync file), and the shared transcript if there is one (to check
-        the alignment against). All expire after about an hour.
+        transcripts folder (the sync file, and the transcript if the recording has none yet), and
+        the shared transcript if there is one (to check the alignment against). All expire after
+        about an hour.
         """
         if not (self.video_sessions_folder_id and self.transcripts_folder_id):
             raise BoxAPIError(400, 'not_configured', 'set BOX_VIDEO_SESSIONS_FOLDER_ID and BOX_TRANSCRIPTS_FOLDER_ID in .env',
@@ -597,6 +598,8 @@ class BoxStorage(Storage):
                               'token': token(rec['folder_key'], 'item_upload', kind='folders')},
             'upload_sync': {'folder_id': self.transcripts_folder_id, 'name': f"{self._folder_name(session_id)}.sync",
                             'existing': [i['name'] for i in self._items(self.transcripts_folder_id) if i['type'] == 'file'],
+                            # No shared transcript yet: the sync makes one and shares it (same folder, same token)
+                            'transcript_name': None if transcript_id else self.transcript_file_name(session_id),
                             'token': token(self.transcripts_folder_id, 'item_upload', kind='folders')},
         }
         key = 'clc1.' + base64.urlsafe_b64encode(json.dumps(payload).encode()).decode().rstrip('=')

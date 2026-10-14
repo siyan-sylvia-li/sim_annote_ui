@@ -10,7 +10,9 @@ start at the same moment. In the app (signed in with Box), open the audio record
 This downloads the recording's audio and the session's zip (download-only, about an hour),
 unzips the camera files, works out how video time lines up with audio time (video_sync.py),
 checks it by matching spoken lines with Whisper, and adds to Box:
-  * a sync file next to the shared transcripts (offset and drift), and
+  * a sync file next to the shared transcripts (offset and drift),
+  * the recording's transcript, if it doesn't have a shared one yet (the same transcript the
+    transcription notebook makes; it's needed for the check anyway), and
   * the camera files, next to the audio (skipped if they're already there).
 Then the app shows the video alongside that recording. Everything downloaded is deleted at the end.
 """
@@ -32,6 +34,7 @@ from pathlib import Path
 import requests
 
 import video_sync
+from colab_transcribe import load_scheme, share_in_box
 from recordings import VIDEO_EXTENSIONS
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(message)s')
@@ -196,6 +199,8 @@ def main():
     parser = ArgumentParser(description=__doc__.split('\n\n')[0])
     parser.add_argument('--key', default=os.environ.get('CLC_KEY'), help='Video sync key from the app (default: $CLC_KEY)')
     parser.add_argument('--no-word-check', action='store_true', help="Skip the Whisper cross-check (faster)")
+    parser.add_argument('--no-transcript', action='store_true',
+                        help="Don't make and share a transcript when the recording has none (check with a quick one instead)")
     args = parser.parse_args()
     payload = decode_key(args.key)
     logger.info(f"Recording: {payload['recording']}  |  video: {payload['zip']['folder']} / {payload['zip']['name']}")
@@ -224,15 +229,29 @@ def main():
         logger.info(f"  offset {sound['offset']:.3f} s, rate {sound['rate']:.6f}, confidence {sound['confidence']:.0f}, "
                     f"{sound['windows']} windows agree; best candidates {sound['peaks']}")
 
-        # 3. Cross-check by matching spoken lines
+        # 3. The recording's transcript: the shared one, or make and share it now (needed for the check anyway)
+        audio_segments, transcript_status = None, None
+        up = payload['upload_sync']
+        if payload.get('transcript'):
+            t = payload['transcript']
+            path = download(t['id'], t['token'], 'shared transcript', work / 'transcript.json')
+            audio_segments = json.loads(path.read_text())['segments']
+        elif up.get('transcript_name') and not args.no_transcript:
+            from transcription import transcribe_files
+            logger.info('This recording has no shared transcript yet: transcribing it with Whisper...')
+            transcript = transcribe_files([{'role': f['role'], 'path': p} for f, p in zip(payload['audio_files'], audio_paths)],
+                                          load_scheme().get('speakers', []))
+            transcript['recording'] = payload['recording']
+            transcript_status = share_in_box({'folder_id': up['folder_id'], 'name': up['transcript_name'], 'token': up['token']},
+                                             transcript)
+            logger.info(f"  {len(transcript['segments'])} segments; shared in Box: {transcript_status}")
+            audio_segments = transcript['segments']
+
+        # 4. Cross-check by matching spoken lines
         words = {'matches': 0, 'agrees': None, 'offset': None}
         if not args.no_word_check:
             logger.info('Cross-checking with Whisper (matching spoken lines)...')
-            if payload.get('transcript'):
-                t = payload['transcript']
-                path = download(t['id'], t['token'], 'shared transcript', work / 'transcript.json')
-                audio_segments = json.loads(path.read_text())['segments']
-            else:
+            if audio_segments is None:
                 wav = work / 'audio_mix.wav'
                 subprocess.run(['ffmpeg', '-v', 'error', '-y', '-f', 'f32le', '-ar', str(video_sync.SAMPLE_RATE), '-ac', '1',
                                 '-i', '-', str(wav)], input=audio.tobytes(), check=True)
@@ -266,8 +285,7 @@ def main():
             'created_at': datetime.now(timezone.utc).isoformat(),
         }
 
-        # 4. Save the sync file first (small), then the camera files (big, slow)
-        up = payload['upload_sync']
+        # 5. Save the sync file first (small), then the camera files (big, slow)
         name = _unique_name(up['name'], set(up['existing']))
         while upload_bytes(up['token'], up['folder_id'], name, json.dumps(sync, indent=2).encode()) == 'exists':
             name = _unique_name(up['name'], set(up['existing']) | {name})
@@ -290,6 +308,12 @@ def main():
         drift = '' if abs(sync['rate'] - 1) < 1e-6 else f" (clock drift {(sync['rate'] - 1) * 100:+.4f}%)"
         print(f"\nDone. The video starts {abs(sync['offset']):.2f} s {'after' if sync['offset'] < 0 else 'before'} "
               f"the audio{drift}.")
+        if transcript_status == 'shared':
+            print('The transcript was added to Box too, so every rater gets it.')
+        elif transcript_status == 'exists':
+            print('A shared transcript appeared in Box in the meantime, so that one was kept.')
+        elif transcript_status:
+            print(f"The transcript couldn't be added to Box ({transcript_status}).")
         if sync['warning']:
             print(f"Note: {sync['warning']}")
         print(f'In the app, load "{payload["recording"]}" again to see the video.')

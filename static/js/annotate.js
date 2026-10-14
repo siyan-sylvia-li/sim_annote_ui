@@ -577,7 +577,8 @@ function renderTimingControls(savedOffset) {
     const update = () => {
         const shift = savedOffset - state.player.offset;   // + = video shown later than saved
         shown.textContent = Math.abs(shift) < 0.001 ? '' : `${shift > 0 ? '+' : ''}${shift.toFixed(1)} s`;
-        save.classList.toggle('d-none', Math.abs(shift) < 0.001);
+        // Raters can try a shift to check it; saving it for everyone is for the project lead
+        save.classList.toggle('d-none', Math.abs(shift) < 0.001 || !state.preparer);
     };
     const nudge = seconds => { state.player.nudge(seconds); update(); };
     save.addEventListener('click', async () => {

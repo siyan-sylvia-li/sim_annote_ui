@@ -130,15 +130,15 @@ Feel free to submit issues, feature requests, or pull requests to improve the ap
 
 Recordings stream from Box through Box's own viewer with a preview-only token, so nothing is downloaded and **view access to the Box folder is enough**.
 
-1. One-time setup: copy `.env.example` to `.env` and fill in `BOX_CLIENT_ID`, `BOX_CLIENT_SECRET` and `BOX_FOLDER_ID` (ask the project lead; never commit `.env`).
-2. Start the app:
-   ```bash
-   python annotate_app.py --storage box
-   ```
-3. Open `http://localhost:5050`, click **Sign in with Box** and sign in with the Box account the recordings are shared with.
-4. Pick a recording, enter your rater name and click **Load**.
+1. Once, in Terminal (Mac): `git clone -b clc-annotation-app https://github.com/siyan-sylvia-li/sim_annote_ui.git ~/sim_annote_ui && open ~/sim_annote_ui`
+2. Every time: double-click **Start CLC Tool.command** in that folder. It updates the tool (`git pull`), asks for the settings the first time (the `BOX_` lines from the project lead's email, copied to the clipboard) and saves them as `.env`, installs `flask` and `requests` if needed, starts the app and opens `http://localhost:5050`.
+3. Sign in with Box, pick a recording, enter your rater name and click **Load**.
+
+(Or by hand: put the settings in `.env`, see `.env.example`, then `python annotate_app.py --storage box`.)
 
 Annotations autosave **on your laptop** in `data/annotations/<recording>/<rater>.json` (git-ignored); **Export JSON** downloads a copy. Unsaved work is also kept in the browser until the save is confirmed, and you are offered to restore it if it didn't make it.
+
+**Raters vs. project lead.** Raters' settings have the recordings and transcripts folders. The project lead's settings also have `BOX_VIDEO_SESSIONS_FOLDER_ID`, which turns on the buttons for preparing recordings (**Copy Colab key**, **Import transcript**, **Copy video sync key**, **Re-sync**); raters don't see them and just get the shared transcripts and synced videos from Box.
 
 **Box app setup (project lead, once):** with a free [Box Developer account](https://account.box.com/signup/developer) (a regular Box account can't save these settings), create a *Platform App → User Authentication (OAuth 2.0)*. Set the redirect URI to `http://localhost:5050/box/callback`, add `http://localhost:5050` to *CORS Domains* (the viewer needs it), and enable *Read all files and folders*. Raters still sign in with their own Box accounts; the developer account only holds the app's settings.
 

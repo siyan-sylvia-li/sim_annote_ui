@@ -1,8 +1,5 @@
 import whisper
-import torchaudio
 import os
-from moviepy import VideoFileClip
-import tqdm
 import json
 import torch
 from logging import getLogger

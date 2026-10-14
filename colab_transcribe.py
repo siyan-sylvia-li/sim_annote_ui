@@ -47,6 +47,9 @@ def decode_key(key: str) -> dict:
         sys.exit('That doesn\'t look like a Colab key from the app (it should start with "clc1.")')
     body = key[len('clc1.'):]
     payload = json.loads(base64.urlsafe_b64decode(body + '=' * (-len(body) % 4)))
+    if payload.get('kind') == 'video_sync':
+        sys.exit('This is a video sync key. Use it with the video sync notebook (colab_sync.py), '
+                 'or copy a transcription key with "Copy Colab key".')
     if payload['expires_at'] < time.time():
         sys.exit('This key has expired (they last about an hour). Copy a new one in the app (Copy Colab key).')
     return payload

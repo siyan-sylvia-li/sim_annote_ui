@@ -373,11 +373,15 @@ async function loadSessionList() {
         return;
     }
     const sessions = await resp.json();
+    state.sessions = sessions;
     const select = $('sessionSelect');
     select.innerHTML = '';
     select.appendChild(el('option', { value: '', text: sessions.length ? 'Select a session…' : 'No videos found' }));
     const kindLabel = { video: 'video', audio: 'audio', role_tracks: 'per-person mics' };
-    for (const s of sessions) select.appendChild(el('option', { value: s.id, text: `${s.name}  ·  ${kindLabel[s.kind] || s.kind}` }));
+    for (const s of sessions) {
+        const label = `${kindLabel[s.kind] || s.kind}${s.has_video ? ' + video' : ''}`;
+        select.appendChild(el('option', { value: s.id, text: `${s.name}  ·  ${label}` }));
+    }
 }
 
 async function init() {
@@ -385,6 +389,7 @@ async function init() {
     const auth = await (await fetchApi('/api/auth')).json();
     state.canMakeColabKey = Boolean(auth.can_make_colab_key);
     state.sharedTranscripts = Boolean(auth.shared_transcripts);
+    state.videoSync = Boolean(auth.video_sync);
     $('colabKeyBtn').classList.toggle('d-none', !state.canMakeColabKey);
     $('saveStatus').title = auth.save_location === 'Box' ? 'Annotations are saved to Box' : `Annotations are saved on this computer in ${auth.save_location}`;
     if (auth.login_required) {
@@ -474,15 +479,26 @@ async function loadSession() {
     const container = $('playerContainer');
     container.classList.toggle('audio-only', descriptor.media === 'audio');
     container.classList.toggle('box-player', descriptor.type === 'box');
-    state.player = createPlayer(container, descriptor, sessionId);
+    container.classList.toggle('with-video', Boolean(descriptor.video));
+    $('videoWrap').classList.toggle('d-none', !descriptor.video);
+    if (descriptor.video) {
+        // Audio recording with a synced video: the audio stays the clock, the video follows
+        const audio = createPlayer(container, descriptor, sessionId);
+        const video = createPlayer($('videoContainer'), { type: descriptor.type, sources: descriptor.video.sources }, sessionId);
+        state.player = new SyncedPlayer(audio, video, descriptor.video, $('videoGap'));
+    } else {
+        state.player = createPlayer(container, descriptor, sessionId);
+    }
     try {
         await state.player.load();
     } catch (err) {
         toast(err.message, 'danger');
         return;
     }
+    if (state.player.videoError) toast(`The video couldn't be loaded (${state.player.videoError.message}); playing the audio only`, 'warning');
     state.player.setRate(parseFloat($('rateSelect').value));
     renderSourceSelect(descriptor);
+    renderVideoBar(descriptor);
     await loadTranscript();
     $('duration').textContent = formatTime(state.player.getDuration());
     renderAll();
@@ -508,6 +524,62 @@ function renderAudioLabel() {
     if (!container.classList.contains('audio-only')) return;
     const src = state.player.sources[state.player.sourceIndex];
     container.appendChild(el('div', { class: 'audio-label' }, el('i', { class: 'fas fa-headphones' }), src.label));
+}
+
+// Under the player: camera + sound pickers for a synced video, or a way to link one
+function renderVideoBar(descriptor) {
+    const bar = $('videoBar');
+    bar.innerHTML = '';
+    const rec = (state.sessions || []).find(s => s.id === state.sessionId);
+    if (descriptor.video) {
+        const camera = el('select', { class: 'form-select form-select-sm', title: 'Camera angle' });
+        descriptor.video.sources.forEach((src, i) => camera.appendChild(el('option', { value: String(i), text: src.label })));
+        camera.addEventListener('change', async () => {
+            try { await state.player.switchCamera(parseInt(camera.value, 10)); } catch (err) { toast(err.message, 'danger'); }
+        });
+        const sound = el('select', { class: 'form-select form-select-sm', title: 'Where the sound comes from' },
+            el('option', { value: 'audio', text: 'Sound: audio recording' }),
+            el('option', { value: 'video', text: 'Sound: camera' }));
+        sound.addEventListener('change', () => state.player.setSound(sound.value));
+        bar.append(el('i', { class: 'fas fa-video' }), camera, sound);
+        if (descriptor.video.warning) bar.appendChild(el('span', { class: 'warn-text' }, el('i', { class: 'fas fa-triangle-exclamation' }), ` ${descriptor.video.warning}`));
+        bar.classList.remove('d-none');
+    } else if (state.videoSync && rec && rec.kind !== 'video') {
+        bar.append(el('span', { class: 'text-muted' }, el('i', { class: 'fas fa-video-slash' }), ' No video linked to this recording yet.'),
+            el('button', { class: 'btn btn-sm btn-outline-secondary', onclick: () => copyVideoSyncKey() },
+                el('i', { class: 'fas fa-key' }), ' Copy video sync key'));
+        bar.classList.remove('d-none');
+    } else {
+        bar.classList.add('d-none');
+    }
+}
+
+// A key for the video sync notebook: this recording's audio + its session's zip, for about an hour
+async function copyVideoSyncKey(zipId = null) {
+    const resp = await fetchApi('/api/video_sync_key', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ session: state.sessionId, zip_id: zipId }),
+    });
+    const data = await resp.json().catch(() => ({}));
+    if (resp.status === 409 && data.choices) {
+        // Several zips could be this session's video: ask which one
+        const list = data.choices.map((z, i) => `${i + 1}. ${z.folder} / ${z.name}`).join('\n');
+        const pick = parseInt(prompt(`Which zip has this recording's video?\n${list}\n\nType its number:`), 10);
+        if (pick >= 1 && pick <= data.choices.length) copyVideoSyncKey(data.choices[pick - 1].id);
+        return;
+    }
+    if (!resp.ok) {
+        if (resp.status !== 401) toast(data.error || 'Could not make a video sync key', 'danger');
+        return;
+    }
+    if (!confirm(`Link "${data.recording}" with the video in ${data.zip}?`)) return;
+    try {
+        await navigator.clipboard.writeText(data.key);
+        toast(`Copied a video sync key (valid ~${Math.round(data.expires_in / 60)} min). Paste it into the video sync notebook.`, 'success');
+    } catch (e) {
+        prompt('Video sync key (valid about an hour). Copy it:', data.key);
+    }
 }
 
 async function switchSource(index) {

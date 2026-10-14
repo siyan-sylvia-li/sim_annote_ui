@@ -27,6 +27,12 @@ ROLE_TRACK = re.compile(r'^Audio\s*(?P<channel>\d+)\s+(?P<role>.+?)\s*#(?P<take>
 CAMERA_ANGLE = re.compile(r'^(?P<prefix>.+?)_(?P<camera>C\d{2,4})_(?P<suffix>[^.]+)\.(?:mp4|mov|m4v|webm)$', re.IGNORECASE)
 
 
+def session_number(text: str):
+    """'Session 4 audio', 'SESSION4', 'Session3 audio' -> 4 / 4 / 3 (None if there's no session number)."""
+    m = re.search(r'session\s*(\d+)', text, re.IGNORECASE)
+    return int(m.group(1)) if m else None
+
+
 def media_kind(name: str):
     ext = Path(name).suffix.lower()
     if ext in VIDEO_EXTENSIONS:
@@ -49,7 +55,7 @@ def role_name(role: str, aliases: dict) -> str:
 def group_recordings(files: list, aliases: dict) -> list:
     """
     files: [{'id', 'name', 'folder' (display path, '' for the root), 'folder_key'}]
-    Returns recordings: [{'id', 'name', 'kind', 'files': [{'id', 'name', 'role', 'channel'}]}].
+    Returns recordings: [{'id', 'name', 'kind', 'folder', 'folder_key', 'files': [{'id', 'name', 'role', 'channel'}]}].
     Single-file recordings use the file id as their id; role-track recordings use
     '<folder_key>#<take>'.
     """
@@ -76,6 +82,7 @@ def group_recordings(files: list, aliases: dict) -> list:
                 'id': f"{folder_key}#{take}",
                 'name': f"{folder + ' / ' if folder else ''}#{take} ({len(members)} mics)",
                 'kind': 'role_tracks',
+                'folder': folder, 'folder_key': folder_key,
                 'files': [{'id': f['id'], 'name': f['name'], 'role': role_name(m.group('role'), aliases),
                            'channel': int(m.group('channel'))} for f, m in members],
             })
@@ -94,6 +101,7 @@ def group_recordings(files: list, aliases: dict) -> list:
                 'id': f"{folder_key}#{prefix}",
                 'name': f"{folder + ' / ' if folder else ''}{prefix} ({len(members)} cameras)",
                 'kind': 'video',
+                'folder': folder, 'folder_key': folder_key,
                 'files': [{'id': f['id'], 'name': f['name'], 'role': None, 'channel': None,
                            'label': f"Camera {m.group('camera').upper()}"} for f, m in members],
             })
@@ -104,6 +112,7 @@ def group_recordings(files: list, aliases: dict) -> list:
                     'id': f['id'],
                     'name': f"{f['folder'] + ' / ' if f['folder'] else ''}{f['name']}",
                     'kind': media_kind(f['name']),
+                    'folder': f['folder'], 'folder_key': folder_key,
                     'files': [{'id': f['id'], 'name': f['name'], 'role': None, 'channel': None}],
                 })
     return sorted(recordings, key=lambda r: _natural_key(r['name']))

@@ -28,7 +28,7 @@ from urllib.parse import quote, urlencode
 
 import requests
 
-from recordings import group_recordings
+from recordings import CAMERA_ANGLE, group_recordings, session_number
 
 
 def _safe_name(name: str) -> str:
@@ -48,6 +48,14 @@ def _write_json(path: Path, doc: dict):
     with os.fdopen(fd, 'w') as f:
         json.dump(doc, f, indent=2)
     os.replace(tmp, path)
+
+
+class ChooseZip(Exception):
+    """More than one zip could be a recording's video: the user has to pick one."""
+
+    def __init__(self, choices: list):
+        self.choices = choices
+        super().__init__('Several zip files could hold this recording\'s video; pick one')
 
 
 class AuthRequired(Exception):
@@ -149,11 +157,43 @@ class Storage(ABC):
         name = re.sub(r'\.\w+$', '', self.recording(session_id)['name'])  # drop a file extension, keep the session path
         return f"{_safe_name(name)}__{_safe_name(session_id)}"
 
+    def _sync_infos(self) -> list:
+        """
+        Video sync files (made by colab_sync.py), newest per audio recording. Each says which
+        camera files belong to which audio recording and how their clocks line up:
+        video_time = offset + rate * audio_time.
+        """
+        return []
+
     def list_sessions(self) -> list:
-        """Every annotatable recording: [{'id', 'name', 'kind'}] (kind: video, audio or role_tracks)."""
-        recordings = group_recordings(self._media_files(), self.role_aliases)
+        """Every annotatable recording: [{'id', 'name', 'kind', 'has_video'}] (kind: video, audio or role_tracks)."""
+        media = self._media_files()
+        recordings = group_recordings(media, self.role_aliases)
+        self._attach_videos(recordings, media)
         self._recordings = {r['id']: r for r in recordings}
-        return [{'id': r['id'], 'name': r['name'], 'kind': r['kind']} for r in recordings]
+        return [{'id': r['id'], 'name': r['name'], 'kind': r['kind'], 'has_video': 'video' in r} for r in recordings]
+
+    def _attach_videos(self, recordings: list, media: list):
+        """Give audio recordings their synced camera files, and stop listing those files as recordings of their own."""
+        by_id = {r['id']: r for r in recordings}
+        file_ids = {(str(f['folder_key']), f['name']): f['id'] for f in media}
+        linked = set()
+        for sync in self._sync_infos():
+            rec = by_id.get(sync.get('session_id'))
+            if not rec or rec['kind'] == 'video':
+                continue
+            files = []
+            for name in sync.get('video_files', []):
+                fid = file_ids.get((str(sync.get('video_folder_id')), name))
+                if fid:
+                    m = CAMERA_ANGLE.match(name)
+                    files.append({'id': fid, 'name': name, 'label': f"Camera {m.group('camera').upper()}" if m else 'Video'})
+            if not files:
+                continue   # sync file made, but the camera files aren't in Box (yet)
+            rec['video'] = {'files': files, 'offset': float(sync.get('offset', 0.0)), 'rate': float(sync.get('rate', 1.0)),
+                            'duration': sync.get('video_duration'), 'warning': sync.get('warning')}
+            linked.update(f['id'] for f in files)
+        recordings[:] = [r for r in recordings if not ({f['id'] for f in r['files']} <= linked)]
 
     def recording(self, session_id: str) -> dict:
         if session_id not in self._recordings:
@@ -173,7 +213,13 @@ class Storage(ABC):
         for f in rec['files']:
             label = f.get('label') or (f"{f['role']} mic" if f['role'] else ('Video' if rec['kind'] == 'video' else 'Audio'))
             sources.append({'label': label, **self._file_source(f['id'])})
-        return {'type': self.player_type, 'media': 'video' if rec['kind'] == 'video' else 'audio', 'sources': sources}
+        player = {'type': self.player_type, 'media': 'video' if rec['kind'] == 'video' else 'audio', 'sources': sources}
+        if rec.get('video'):
+            # A synced video shown alongside the audio (which stays the clock and the sound)
+            v = rec['video']
+            player['video'] = {'sources': [{'label': f['label'], **self._file_source(f['id'])} for f in v['files']],
+                               'offset': v['offset'], 'rate': v['rate'], 'duration': v['duration'], 'warning': v['warning']}
+        return player
 
     def load_annotations(self, session_id: str, rater: str):
         return self.docs.load_annotations(session_id, rater)
@@ -220,6 +266,15 @@ class LocalStorage(Storage):
     def _file_source(self, file_id: str) -> dict:
         return {'src': f"/media/{quote(file_id)}"}
 
+    def _sync_infos(self) -> list:
+        # Same layout as Box: sync files sit in a 'transcripts' folder under the media root
+        latest = {}
+        for path in sorted((self.media_root / 'transcripts').glob('*.sync*.json'), key=lambda p: p.stat().st_mtime):
+            with open(path) as f:
+                sync = json.load(f)
+            latest[sync.get('session_id')] = sync
+        return list(latest.values())
+
 
 class BoxStorage(Storage):
     """
@@ -238,6 +293,9 @@ class BoxStorage(Storage):
       Box folder so every rater works from the same one. The first transcript uploaded for a
       recording (by Colab, or by "Import transcript") is the shared one and is never replaced.
       Raters keep a local copy for their speaker edits; it's refreshed if Box has a different one.
+    * Synced video: `video_sync_key` hands colab_sync.py the recording's audio and its session's
+      zip from `video_sessions_folder_id`; Colab puts the camera files next to the audio and a
+      sync file (offset/drift) next to the transcripts, and the app links them up when listing.
     """
     requires_login = True
     player_type = 'box'
@@ -247,7 +305,8 @@ class BoxStorage(Storage):
     PREVIEW_SCOPES = 'base_preview item_preview'
 
     def __init__(self, client_id: str, client_secret: str, folder_id: str, redirect_uri: str,
-                 annotations_root: str, role_aliases: dict = None, transcripts_folder_id: str = None):
+                 annotations_root: str, role_aliases: dict = None, transcripts_folder_id: str = None,
+                 video_sessions_folder_id: str = None):
         if not folder_id:
             raise ValueError('BOX_FOLDER_ID is required for Box storage')
         if not (client_id and client_secret):
@@ -257,6 +316,8 @@ class BoxStorage(Storage):
         self.client_secret = client_secret
         self.folder_id = str(folder_id)
         self.transcripts_folder_id = str(transcripts_folder_id) if transcripts_folder_id else None
+        self.video_sessions_folder_id = str(video_sessions_folder_id) if video_sessions_folder_id else None
+        self._sync_cache = {}   # sync file id -> contents (sync files are never edited, only added)
         self.redirect_uri = redirect_uri
         self._access_token = None
         self._refresh_token = None
@@ -331,7 +392,7 @@ class BoxStorage(Storage):
     def _items(self, folder_id: str) -> list:
         items, marker = [], None
         while True:
-            params = {'fields': 'id,type,name', 'limit': 1000, 'usemarker': 'true'}
+            params = {'fields': 'id,type,name,created_at,size', 'limit': 1000, 'usemarker': 'true'}
             if marker:
                 params['marker'] = marker
             resp = self._request('GET', f"{self.API}/folders/{folder_id}/items", params=params)
@@ -372,8 +433,10 @@ class BoxStorage(Storage):
         return resp.json()
 
     def preview_token(self, session_id: str, file_id: str) -> dict:
-        """A token that can only preview `file_id`, which must belong to this recording."""
-        if file_id not in {f['id'] for f in self.recording(session_id)['files']}:
+        """A token that can only preview `file_id`, which must belong to this recording (or its synced video)."""
+        rec = self.recording(session_id)
+        allowed = {f['id'] for f in rec['files']} | {f['id'] for f in rec.get('video', {}).get('files', [])}
+        if file_id not in allowed:
             raise FileNotFoundError(file_id)
         token = self._downscoped(file_id, self.PREVIEW_SCOPES)
         return {'token': token['access_token'], 'expires_in': token.get('expires_in')}
@@ -412,6 +475,93 @@ class BoxStorage(Storage):
         key = 'clc1.' + base64.urlsafe_b64encode(json.dumps(payload).encode()).decode().rstrip('=')
         return {'key': key, 'recording': rec['name'], 'files': len(files), 'expires_in': expires_in,
                 'shares_transcript': will_share, 'transcripts_configured': self.transcripts_folder_id is not None}
+
+    # ---------- Synced video ----------
+
+    def _sync_infos(self) -> list:
+        if not self.transcripts_folder_id:
+            return []
+        latest = {}
+        items = [i for i in self._items(self.transcripts_folder_id)
+                 if i['type'] == 'file' and '.sync' in i['name'] and i['name'].endswith('.json')]
+        # A re-run adds a new sync file rather than replacing one, so the newest wins
+        for item in sorted(items, key=lambda i: i.get('created_at') or ''):
+            if item['id'] not in self._sync_cache:
+                resp = self._request('GET', f"{self.API}/files/{item['id']}/content")
+                _check(resp, f"read '{item['name']}'")
+                self._sync_cache[item['id']] = resp.json()
+            sync = self._sync_cache[item['id']]
+            latest[sync.get('session_id')] = sync
+        return list(latest.values())
+
+    def _require_permission(self, kind: str, item_id: str, permission: str, message: str):
+        resp = self._request('GET', f"{self.API}/{kind}/{item_id}", params={'fields': 'permissions'})
+        _check(resp, 'check permissions')
+        if not resp.json().get('permissions', {}).get(permission, False):
+            raise BoxAPIError(403, f'{permission}_not_allowed', message, 'make a video sync key')
+
+    def session_zips(self, session_id: str) -> list:
+        """Zip files in the session folder (in `video_sessions_folder_id`) with the same session number as this recording."""
+        rec = self.recording(session_id)
+        number = session_number(rec['folder'] or rec['name'])
+        if number is None:
+            raise BoxAPIError(404, 'no_session_number', f"can't tell which session '{rec['name']}' belongs to", 'find the video')
+        folders = [i for i in self._items(self.video_sessions_folder_id)
+                   if i['type'] == 'folder' and session_number(i['name']) == number]
+        zips = [{'id': z['id'], 'name': z['name'], 'folder': f['name'], 'size': z.get('size')}
+                for f in folders for z in self._items(f['id']) if z['type'] == 'file' and z['name'].lower().endswith('.zip')]
+        if not zips:
+            raise BoxAPIError(404, 'no_zip', f"no zip file found for session {number} in the sessions folder", 'find the video')
+        return zips
+
+    def video_sync_key(self, session_id: str, zip_id: str = None) -> dict:
+        """
+        A key for colab_sync.py: download-only tokens for this recording's audio and its session's
+        video zip, upload-only tokens for the recording's audio folder (camera files) and the
+        transcripts folder (the sync file), and the shared transcript if there is one (to check
+        the alignment against). All expire after about an hour.
+        """
+        if not (self.video_sessions_folder_id and self.transcripts_folder_id):
+            raise BoxAPIError(400, 'not_configured', 'set BOX_VIDEO_SESSIONS_FOLDER_ID and BOX_TRANSCRIPTS_FOLDER_ID in .env',
+                              'make a video sync key')
+        rec = self.recording(session_id)
+        if rec['kind'] == 'video':
+            raise BoxAPIError(400, 'already_video', 'this recording is already a video', 'make a video sync key')
+        zips = self.session_zips(session_id)
+        if zip_id:
+            zips = [z for z in zips if z['id'] == zip_id]
+        if len(zips) != 1:
+            raise ChooseZip(zips)
+        zip_file = zips[0]
+        self._require_permission('files', zip_file['id'], 'can_download',
+                                 f"your Box account isn't allowed to download '{zip_file['name']}'")
+        for f in rec['files']:
+            self._require_permission('files', f['id'], 'can_download', f"your Box account isn't allowed to download '{f['name']}'")
+        self._require_permission('folders', rec['folder_key'], 'can_upload',
+                                 f"your Box account can't add files to '{rec['folder']}', where the camera files go")
+        self._require_permission('folders', self.transcripts_folder_id, 'can_upload',
+                                 "your Box account can't add files to the shared transcripts folder, where the sync file goes")
+
+        def token(item_id, scope, kind='files'):
+            return self._downscoped(item_id, scope, kind=kind)['access_token']
+
+        existing = [i['name'] for i in self._items(rec['folder_key']) if i['type'] == 'file']
+        transcript_id = self._shared_transcript_id(session_id)
+        payload = {
+            'kind': 'video_sync', 'recording': rec['name'], 'session_id': session_id, 'recording_kind': rec['kind'],
+            'expires_at': int(time.time()) + 3600,
+            'audio_files': [{'id': f['id'], 'name': f['name'], 'role': f['role'], 'token': token(f['id'], 'item_download')}
+                            for f in rec['files']],
+            'zip': {**zip_file, 'token': token(zip_file['id'], 'item_download')},
+            'transcript': {'id': transcript_id, 'token': token(transcript_id, 'item_download')} if transcript_id else None,
+            'upload_videos': {'folder_id': rec['folder_key'], 'existing': existing,
+                              'token': token(rec['folder_key'], 'item_upload', kind='folders')},
+            'upload_sync': {'folder_id': self.transcripts_folder_id, 'name': f"{self._folder_name(session_id)}.sync",
+                            'existing': [i['name'] for i in self._items(self.transcripts_folder_id) if i['type'] == 'file'],
+                            'token': token(self.transcripts_folder_id, 'item_upload', kind='folders')},
+        }
+        key = 'clc1.' + base64.urlsafe_b64encode(json.dumps(payload).encode()).decode().rstrip('=')
+        return {'key': key, 'recording': rec['name'], 'zip': f"{zip_file['folder']} / {zip_file['name']}", 'expires_in': 3600}
 
     # ---------- Shared transcripts ----------
 

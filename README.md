@@ -164,6 +164,16 @@ Recordings with one mic per person get their speakers from the file names; speec
 
 **Import transcript** also accepts plain Whisper output (with `segments`) or the labels exported from the original app. It appears under the player; click a segment (Shift+click for a range) to select it, and assign speakers from the menu on each segment. Labels created from selected segments store their ids (`segment_ids`), linking each call-out and check back to its utterances.
 
+### Videos (syncing a session's video with its audio)
+
+Each session's camera angles are in a zip in the sessions folder (`BOX_VIDEO_SESSIONS_FOLDER_ID`), and the video and the audio recording don't start at the same moment. Linking them is done once per audio recording, on Colab:
+
+1. In the app, open the audio recording and click **Copy video sync key** (under the player). The app finds the zip in the session folder with the same session number, checks your Box account can download it and add files next to the audio, and asks you to confirm the match.
+2. Open `colab_sync.ipynb` in Colab (GPU runtime), run the cells and paste the key. `colab_sync.py` downloads the audio and the zip, unzips the camera files, and works out the offset (and any clock drift) between video and audio by matching their sound (`video_sync.py`), cross-checked by matching spoken lines with Whisper. It then adds a sync file next to the shared transcripts and the camera files next to the audio. Nothing is downloaded to the laptop, and Colab's copy is deleted at the end.
+3. Load the recording again: the video plays above the timeline, muted, with sound from the audio recording (switchable to the camera), and a camera picker. Annotations and transcripts stay in audio time.
+
+If the alignment couldn't be confirmed, the app shows a note under the video so someone can check it by eye. Running step 2 again adds a newer sync file (the newest is used) and skips camera files already in Box.
+
 ### Development with local files
 
 ```bash

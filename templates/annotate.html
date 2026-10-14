@@ -35,7 +35,14 @@
     <main id="workspace" class="workspace d-none">
         <!-- Left: video, transport, timeline -->
         <section class="media-col">
+            <!-- Synced video for an audio recording (muted; the audio below is the clock) -->
+            <div id="videoWrap" class="video-wrap d-none">
+                <div id="videoContainer" class="player-container"></div>
+                <div id="videoGap" class="video-gap d-none"><i class="fas fa-video-slash"></i> No video for this part of the recording</div>
+            </div>
             <div id="playerContainer" class="player-container"></div>
+            <!-- Camera / sound pickers when there's a synced video; "Copy video sync key" when there isn't -->
+            <div id="videoBar" class="video-bar d-none"></div>
 
             <div class="transport">
                 <button class="btn btn-sm btn-light" id="backBtn" title="Back 5s (←)"><i class="fas fa-backward"></i> 5s</button>

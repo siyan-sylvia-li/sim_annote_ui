@@ -25,7 +25,7 @@ from urllib.parse import urlparse
 from flask import Flask, abort, jsonify, redirect, render_template, request, send_file, session
 from werkzeug.exceptions import HTTPException
 
-from annotation_storage import AuthRequired, BoxAPIError, BoxStorage, LocalStorage, new_oauth_state
+from annotation_storage import AuthRequired, BoxAPIError, BoxStorage, ChooseZip, LocalStorage, new_oauth_state
 from transcription import normalize_segments
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -95,7 +95,9 @@ def auth_status():
     return jsonify({'login_required': storage.requires_login, 'authenticated': storage.is_authenticated(),
                     'save_location': storage.save_location,
                     'can_make_colab_key': isinstance(storage, BoxStorage),
-                    'shared_transcripts': bool(getattr(storage, 'transcripts_folder_id', None))})
+                    'shared_transcripts': bool(getattr(storage, 'transcripts_folder_id', None)),
+                    'video_sync': bool(getattr(storage, 'video_sessions_folder_id', None)
+                                       and getattr(storage, 'transcripts_folder_id', None))})
 
 
 @app.route('/box/login')
@@ -224,6 +226,20 @@ def colab_key():
     return jsonify(key)
 
 
+@app.route('/api/video_sync_key', methods=['POST'])
+def video_sync_key():
+    """Box only: a short-lived key for colab_sync.py to line this recording up with its session's video."""
+    if not isinstance(storage, BoxStorage):
+        abort(404, 'Video sync keys are only needed when recordings are in Box')
+    session_id = session_arg()
+    try:
+        key = storage.video_sync_key(session_id, (request.get_json(silent=True) or {}).get('zip_id'))
+    except ChooseZip as e:
+        return jsonify({'error': str(e), 'choices': e.choices}), 409
+    logger.info(f"Made a video sync key for {key['recording']} ({key['zip']})")
+    return jsonify(key)
+
+
 @app.route('/api/transcript', methods=['GET'])
 def get_transcript():
     return jsonify(storage.load_transcript(session_arg()))
@@ -322,6 +338,8 @@ def main():
                 role_aliases=role_aliases,
                 # Box folder where each recording's shared transcript is kept (optional)
                 transcripts_folder_id=folder_id(os.environ.get('BOX_TRANSCRIPTS_FOLDER_ID')),
+                # Box folder with one folder per session, each holding a zip of the camera files (optional)
+                video_sessions_folder_id=folder_id(os.environ.get('BOX_VIDEO_SESSIONS_FOLDER_ID')),
             )
         except ValueError as e:
             parser.error(str(e))

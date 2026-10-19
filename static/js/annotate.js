@@ -219,8 +219,7 @@ function deleteLoop(loop) {
     changed();
 }
 
-function addTimestamp(path, time, segmentIds = []) {
-    const loop = activeLoop();
+function addTimestamp(path, time, segmentIds = [], loop = activeLoop()) {
     if (!loop) {
         toast('Open a call-out first (press N or click one on the timeline)', 'warning');
         return;
@@ -231,6 +230,84 @@ function addTimestamp(path, time, segmentIds = []) {
     changed();
     const entry = timestampLists().find(t => t.path === path);
     toast(`${entry.list.label} at ${formatTime(time)} → call-out #${loop.callout.number}`, 'success');
+}
+
+// ---------- "Which call-out?" picker for check backs and closures ----------
+//
+// A check back often belongs to an earlier call-out than the one being edited, so I / T / C (and
+// the selection bar's buttons) ask which call-out to attach it to instead of assuming the open one.
+// The moment is taken when the key is pressed, so playback can keep running while choosing.
+
+function summarizeLoop(loop) {
+    const parts = timestampLists().map(({ path, list }) => {
+        const n = getList(loop, path).length;
+        return n ? `${n} ${list.label.replace(' Check Back', ' CB').replace('Loop Closure', 'closure')}` : null;
+    }).filter(Boolean);
+    return parts.length ? parts.join(' · ') : 'nothing added yet';
+}
+
+function chooseLoopThenAdd(path, time, segmentIds = []) {
+    // Only call-outs that had started by then; the open one first, then the nearest earlier ones
+    const candidates = sortedLoops().filter(l => l.callout.start <= time + 0.5).reverse();
+    const active = activeLoop();
+    if (active && candidates.includes(active)) {
+        candidates.splice(candidates.indexOf(active), 1);
+        candidates.unshift(active);
+    }
+    if (!candidates.length) {
+        toast(`No call-out before ${formatTime(time)} yet: press N to make one`, 'warning');
+        return;
+    }
+    if (candidates.length === 1) {
+        addTimestamp(path, time, segmentIds, candidates[0]);
+        return;
+    }
+    openLoopPicker(path, time, segmentIds, candidates.slice(0, 9));
+}
+
+function openLoopPicker(path, time, segmentIds, candidates) {
+    closeLoopPicker();
+    const label = timestampLists().find(t => t.path === path).list.label;
+    const kind = path.split('.').pop();
+    const choose = loop => { closeLoopPicker(); addTimestamp(path, time, segmentIds, loop); };
+    const rows = candidates.map((loop, i) => el('button', {
+        class: `picker-row${i === 0 ? ' highlighted' : ''}`, onclick: () => choose(loop),
+    },
+        el('kbd', { text: String(i + 1) }),
+        el('span', { class: 'picker-num', text: `#${loop.callout.number}` }),
+        el('span', { class: 'picker-summary', text: loop.callout.summary || '(no summary)' }),
+        el('span', { class: 'picker-time', text: formatTime(loop.callout.start) }),
+        el('span', { class: 'picker-status', text: summarizeLoop(loop) })));
+    const panel = el('div', { class: 'loop-picker', id: 'loopPicker' },
+        el('div', { class: 'picker-title' }, el('i', { class: `lg lg-${kind}` }),
+            ` Add ${label} at ${formatTime(time, true)} to which call-out?`),
+        ...rows,
+        el('div', { class: 'picker-hint' }, 'Press a number or click · Enter for the highlighted one · Esc to cancel'));
+    document.body.appendChild(panel);
+    state.picker = { candidates, rows, index: 0, choose };
+}
+
+function closeLoopPicker() {
+    const panel = $('loopPicker');
+    if (panel) panel.remove();
+    state.picker = null;
+}
+
+// Keys while the picker is open; returns true if the key was used
+function pickerKey(e) {
+    const p = state.picker;
+    if (!p) return false;
+    const n = parseInt(e.key, 10);
+    if (n >= 1 && n <= p.candidates.length) p.choose(p.candidates[n - 1]);
+    else if (e.key === 'Enter') p.choose(p.candidates[p.index]);
+    else if (e.key === 'Escape') closeLoopPicker();
+    else if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+        p.rows[p.index].classList.remove('highlighted');
+        p.index = (p.index + (e.key === 'ArrowDown' ? 1 : p.candidates.length - 1)) % p.candidates.length;
+        p.rows[p.index].classList.add('highlighted');
+    } else return true;   // swallow other keys so they don't start/stop playback etc. behind the picker
+    e.preventDefault();
+    return true;
 }
 
 // Time to use for "mark" actions: start of the selection if there is one, else the playhead
@@ -415,6 +492,7 @@ async function init() {
     setupTooltips();
     setupTranscriptControls();
     document.addEventListener('keydown', onKeyDown);
+    document.addEventListener('mousedown', e => { if (state.picker && !e.target.closest('#loopPicker')) closeLoopPicker(); });
     window.addEventListener('beforeunload', e => {
         if (state.dirty || state.saving) { e.preventDefault(); e.returnValue = ''; }
     });
@@ -687,11 +765,12 @@ function tick() {
 
 function onKeyDown(e) {
     if (!state.player || isTyping(e) || e.metaKey || e.ctrlKey || e.altKey) return;
+    if (pickerKey(e)) return;
     const key = e.key.toLowerCase();
     const hotkeys = Object.fromEntries(timestampLists().filter(t => t.list.hotkey).map(t => [t.list.hotkey, t.path]));
     if (e.key === ' ') { e.preventDefault(); togglePlay(); }
     else if (key === 'n') { e.preventDefault(); newLoopAtPlayhead(); }
-    else if (hotkeys[key]) { e.preventDefault(); addTimestamp(hotkeys[key], markTime(), markSegments()); clearSelection(); }
+    else if (hotkeys[key]) { e.preventDefault(); chooseLoopThenAdd(hotkeys[key], markTime(), markSegments()); clearSelection(); }
     else if (e.key === 'ArrowLeft') { e.preventDefault(); nudge(e.shiftKey ? -1 : -5); }
     else if (e.key === 'ArrowRight') { e.preventDefault(); nudge(e.shiftKey ? 1 : 5); }
     else if (e.key === '[') stepLoop(-1);
@@ -849,9 +928,9 @@ function renderSelectionBar() {
     bar.appendChild(el('button', { class: 'btn btn-sm btn-success', onclick: () => { createLoop(sel.start, sel.end, markSegments()); clearSelection(); } },
         el('i', { class: 'fas fa-plus' }), ' New call-out'));
     if (loop) {
-        bar.appendChild(el('span', { class: 'sel-divider', text: `→ #${loop.callout.number}:` }));
         bar.appendChild(el('button', {
             class: 'btn btn-sm btn-outline-secondary',
+            title: `Use this span as call-out #${loop.callout.number}'s time`,
             onclick: () => {
                 loop.callout.start = sel.start;
                 loop.callout.end = sel.end;
@@ -860,12 +939,15 @@ function renderSelectionBar() {
                 clearSelection();
                 changed();
             },
-        }, 'Set call-out span'));
+        }, `Set #${loop.callout.number}'s span`));
+    }
+    // Check backs / closures: asks which call-out they belong to
+    if (state.doc.loops.length) {
         for (const { path, list } of timestampLists()) {
             const kind = path.split('.').pop();
             bar.appendChild(el('button', {
                 class: `btn btn-sm btn-outline-secondary btn-mk-${kind}`,
-                onclick: () => { addTimestamp(path, sel.start, markSegments()); clearSelection(); },
+                onclick: () => { chooseLoopThenAdd(path, sel.start, markSegments()); clearSelection(); },
             }, `+ ${list.label}`));
         }
     }

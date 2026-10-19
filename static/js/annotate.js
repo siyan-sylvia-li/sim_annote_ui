@@ -262,7 +262,7 @@ function chooseLoopThenAdd(path, time, segmentIds = []) {
         addTimestamp(path, time, segmentIds, candidates[0]);
         return;
     }
-    openLoopPicker(path, time, segmentIds, candidates.slice(0, 9));
+    openLoopPicker(path, time, segmentIds, candidates);
 }
 
 function openLoopPicker(path, time, segmentIds, candidates) {
@@ -273,7 +273,6 @@ function openLoopPicker(path, time, segmentIds, candidates) {
     const rows = candidates.map((loop, i) => el('button', {
         class: `picker-row${i === 0 ? ' highlighted' : ''}`, onclick: () => choose(loop),
     },
-        el('kbd', { text: String(i + 1) }),
         el('span', { class: 'picker-num', text: `#${loop.callout.number}` }),
         el('span', { class: 'picker-summary', text: loop.callout.summary || '(no summary)' }),
         el('span', { class: 'picker-time', text: formatTime(loop.callout.start) }),
@@ -281,10 +280,46 @@ function openLoopPicker(path, time, segmentIds, candidates) {
     const panel = el('div', { class: 'loop-picker', id: 'loopPicker' },
         el('div', { class: 'picker-title' }, el('i', { class: `lg lg-${kind}` }),
             ` Add ${label} at ${formatTime(time, true)} to which call-out?`),
-        ...rows,
-        el('div', { class: 'picker-hint' }, 'Press a number or click · Enter for the highlighted one · Esc to cancel'));
+        el('div', { class: 'picker-list' }, ...rows),
+        el('div', { class: 'picker-hint', id: 'pickerHint' }, PICKER_HINT));
     document.body.appendChild(panel);
-    state.picker = { candidates, rows, index: 0, choose };
+    state.picker = { candidates, rows, index: 0, choose, typed: '', typedAt: 0 };
+}
+
+const PICKER_HINT = "Type the call-out's number or click it · Enter for the highlighted one · Esc to cancel";
+
+function highlightPickerRow(index) {
+    const p = state.picker;
+    p.rows[p.index].classList.remove('highlighted');
+    p.index = index;
+    p.rows[index].classList.add('highlighted');
+    p.rows[index].scrollIntoView({ block: 'nearest' });
+}
+
+// Typing a call-out's own number: picks it as soon as it's unambiguous (e.g. "2" when there's no
+// #20-#29); otherwise highlights the closest match and waits for more digits or Enter
+function pickerDigit(digit) {
+    const p = state.picker;
+    if (Date.now() - p.typedAt > 1500) p.typed = '';   // a pause starts a new number
+    p.typedAt = Date.now();
+    const matching = typed => p.candidates.filter(l => String(l.callout.number).startsWith(typed));
+    let typed = p.typed + digit;
+    if (!matching(typed).length) typed = digit;          // no call-out starts with that: start over
+    const matches = matching(typed);
+    p.typed = typed;
+    const hint = $('pickerHint');
+    if (!matches.length) {
+        hint.textContent = `No call-out #${typed} here. ${PICKER_HINT}`;
+        p.typed = '';
+        return;
+    }
+    const exact = matches.find(l => String(l.callout.number) === typed);
+    if (exact && matches.length === 1) {
+        p.choose(exact);
+        return;
+    }
+    highlightPickerRow(p.candidates.indexOf(exact || matches[0]));
+    hint.textContent = `#${typed}… press Enter for #${(exact || matches[0]).callout.number}, or keep typing`;
 }
 
 function closeLoopPicker() {
@@ -297,14 +332,11 @@ function closeLoopPicker() {
 function pickerKey(e) {
     const p = state.picker;
     if (!p) return false;
-    const n = parseInt(e.key, 10);
-    if (n >= 1 && n <= p.candidates.length) p.choose(p.candidates[n - 1]);
+    if (/^[0-9]$/.test(e.key)) pickerDigit(e.key);
     else if (e.key === 'Enter') p.choose(p.candidates[p.index]);
     else if (e.key === 'Escape') closeLoopPicker();
     else if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
-        p.rows[p.index].classList.remove('highlighted');
-        p.index = (p.index + (e.key === 'ArrowDown' ? 1 : p.candidates.length - 1)) % p.candidates.length;
-        p.rows[p.index].classList.add('highlighted');
+        highlightPickerRow((p.index + (e.key === 'ArrowDown' ? 1 : p.candidates.length - 1)) % p.candidates.length);
     } else return true;   // swallow other keys so they don't start/stop playback etc. behind the picker
     e.preventDefault();
     return true;
@@ -1354,7 +1386,7 @@ function renderTimestamps(loop, field) {
         });
         block.appendChild(el('button', {
             class: `btn btn-sm btn-outline-secondary mark-btn btn-mk-${kind}`,
-            onclick: () => { addTimestamp(path, markTime(), markSegments()); clearSelection(); },
+            onclick: e => { e.currentTarget.blur(); chooseLoopThenAdd(path, markTime(), markSegments()); clearSelection(); },
         }, el('i', { class: 'fas fa-stopwatch' }), ' Mark now ', list.hotkey ? el('kbd', { text: list.hotkey.toUpperCase() }) : null));
         wrap.appendChild(block);
     }

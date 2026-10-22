@@ -288,9 +288,7 @@ function openLoopPicker(path, time, segmentIds, candidates) {
 function showNoteStep(path, time, segmentIds, loop, label, kind, candidates) {
     const panel = $('loopPicker');
     panel.innerHTML = '';
-    // Selected transcript lines are a good start for the note; it can be edited
-    const note = el('input', { class: 'form-control', placeholder: 'note (optional), e.g. "ok", "epi given"',
-        value: segmentIds.length ? segmentsById(segmentIds).map(s => s.text).join(' ') : '' });
+    const note = el('input', { class: 'form-control', placeholder: 'note (optional), e.g. "ok", "epi given"' });
     const add = () => { closeLoopPicker(); addTimestamp(path, time, segmentIds, loop, note.value.trim()); };
     note.addEventListener('keydown', e => {
         if (e.key === 'Enter') { e.preventDefault(); add(); }
@@ -308,7 +306,6 @@ function showNoteStep(path, time, segmentIds, loop, label, kind, candidates) {
         el('div', { class: 'picker-hint' }, 'Enter to add (the note is optional) · Esc to cancel'));
     state.picker = { step: 'note', add };
     note.focus();
-    note.select();
 }
 
 const PICKER_HINT = "Type the call-out's number or click it · Enter for the highlighted one · Esc to cancel";

@@ -219,13 +219,13 @@ function deleteLoop(loop) {
     changed();
 }
 
-function addTimestamp(path, time, segmentIds = [], loop = activeLoop()) {
+function addTimestamp(path, time, segmentIds = [], loop = activeLoop(), note = '') {
     if (!loop) {
         toast('Open a call-out first (press N or click one on the timeline)', 'warning');
         return;
     }
     const list = getList(loop, path);
-    list.push({ time: roundTime(time), note: '', segment_ids: segmentIds });
+    list.push({ time: roundTime(time), note, segment_ids: segmentIds });
     list.sort((a, b) => a.time - b.time);
     changed();
     const entry = timestampLists().find(t => t.path === path);
@@ -258,18 +258,16 @@ function chooseLoopThenAdd(path, time, segmentIds = []) {
         toast(`No call-out before ${formatTime(time)} yet: press N to make one`, 'warning');
         return;
     }
-    if (candidates.length === 1) {
-        addTimestamp(path, time, segmentIds, candidates[0]);
-        return;
-    }
     openLoopPicker(path, time, segmentIds, candidates);
 }
 
+// Step 1: which call-out (skipped when there's only one). Step 2: an optional note, so it doesn't
+// have to be typed into the call-out's form afterwards.
 function openLoopPicker(path, time, segmentIds, candidates) {
     closeLoopPicker();
     const label = timestampLists().find(t => t.path === path).list.label;
     const kind = path.split('.').pop();
-    const choose = loop => { closeLoopPicker(); addTimestamp(path, time, segmentIds, loop); };
+    const choose = loop => showNoteStep(path, time, segmentIds, loop, label, kind, candidates.length > 1 ? candidates : null);
     const rows = candidates.map((loop, i) => el('button', {
         class: `picker-row${i === 0 ? ' highlighted' : ''}`, onclick: () => choose(loop),
     },
@@ -284,6 +282,33 @@ function openLoopPicker(path, time, segmentIds, candidates) {
         el('div', { class: 'picker-hint', id: 'pickerHint' }, PICKER_HINT));
     document.body.appendChild(panel);
     state.picker = { candidates, rows, index: 0, choose, typed: '', typedAt: 0 };
+    if (candidates.length === 1) choose(candidates[0]);
+}
+
+function showNoteStep(path, time, segmentIds, loop, label, kind, candidates) {
+    const panel = $('loopPicker');
+    panel.innerHTML = '';
+    // Selected transcript lines are a good start for the note; it can be edited
+    const note = el('input', { class: 'form-control', placeholder: 'note (optional), e.g. "ok", "epi given"',
+        value: segmentIds.length ? segmentsById(segmentIds).map(s => s.text).join(' ') : '' });
+    const add = () => { closeLoopPicker(); addTimestamp(path, time, segmentIds, loop, note.value.trim()); };
+    note.addEventListener('keydown', e => {
+        if (e.key === 'Enter') { e.preventDefault(); add(); }
+        else if (e.key === 'Escape') { e.preventDefault(); closeLoopPicker(); }
+    });
+    panel.append(
+        el('div', { class: 'picker-title' }, el('i', { class: `lg lg-${kind}` }),
+            ` ${label} at ${formatTime(time, true)} → call-out #${loop.callout.number}`,
+            loop.callout.summary ? el('span', { class: 'picker-summary-inline', text: ` (${loop.callout.summary})` }) : null),
+        note,
+        el('div', { class: 'picker-actions' },
+            candidates ? el('button', { class: 'btn btn-sm btn-link', onclick: () => openLoopPicker(path, time, segmentIds, candidates) },
+                el('i', { class: 'fas fa-arrow-left' }), ' Other call-out') : el('span'),
+            el('button', { class: 'btn btn-sm btn-primary', onclick: add }, 'Add')),
+        el('div', { class: 'picker-hint' }, 'Enter to add (the note is optional) · Esc to cancel'));
+    state.picker = { step: 'note', add };
+    note.focus();
+    note.select();
 }
 
 const PICKER_HINT = "Type the call-out's number or click it · Enter for the highlighted one · Esc to cancel";
@@ -332,6 +357,13 @@ function closeLoopPicker() {
 function pickerKey(e) {
     const p = state.picker;
     if (!p) return false;
+    if (p.step === 'note') {
+        // The note box normally has the keys; this is for when it lost focus (e.g. a click in the panel)
+        if (e.key === 'Enter') p.add();
+        else if (e.key === 'Escape') closeLoopPicker();
+        e.preventDefault();
+        return true;
+    }
     if (/^[0-9]$/.test(e.key)) pickerDigit(e.key);
     else if (e.key === 'Enter') p.choose(p.candidates[p.index]);
     else if (e.key === 'Escape') closeLoopPicker();
@@ -1381,6 +1413,10 @@ function renderTimestamps(loop, field) {
             block.appendChild(el('div', { class: 'ts-entry' },
                 el('span', { class: 'ts-y', text: 'y' }),
                 el('button', { class: 'btn btn-sm btn-link ts-time', title: 'Jump here', onclick: () => state.player.seek(entry.time) }, formatTime(entry.time, true)),
+                el('button', {
+                    class: 'btn btn-sm btn-light', title: 'Set to the current moment',
+                    onclick: () => { entry.time = roundTime(state.player.getTime()); entries.sort((a, b) => a.time - b.time); changed(); },
+                }, el('i', { class: 'fas fa-stopwatch' })),
                 note,
                 el('button', { class: 'btn btn-sm btn-link text-danger', title: 'Remove', onclick: () => { entries.splice(idx, 1); changed(); } }, el('i', { class: 'fas fa-times' }))));
         });

@@ -61,6 +61,7 @@
                 <select id="sourceSelect" class="form-select form-select-sm source-select d-none" title="Switch between this recording's mics or cameras"></select>
                 <span class="time-display"><span id="currentTime">0:00.0</span> / <span id="duration">–</span></span>
                 <button class="btn btn-sm btn-success ms-auto" id="newLoopBtn" title="New call-out at current time (N)"><i class="fas fa-plus"></i> New call-out <kbd>N</kbd></button>
+                <button class="btn btn-sm btn-recap" id="newRecapBtn" title="New recap at current time (R): information shared with the team that isn't a loop, e.g. a team huddle or summary"><i class="fas fa-plus"></i> New recap <kbd>R</kbd></button>
             </div>
 
             <div class="timeline-card">
@@ -70,6 +71,7 @@
                         <span><i class="lg lg-information"></i>Info check back</span>
                         <span><i class="lg lg-task_completion"></i>Task check back</span>
                         <span><i class="lg lg-loop_closure"></i>Loop closure</span>
+                        <span><i class="lg lg-recap"></i>Recap</span>
                     </div>
                     <label class="zoom-control"><i class="fas fa-search-minus"></i>
                         <input type="range" id="zoomRange" min="1" max="30" value="1" step="1">
@@ -125,6 +127,8 @@
         <div class="offcanvas-body p-0">
             <div class="table-scroll">
                 <table id="loopTable" class="loop-table"></table>
+                <h6 class="recap-table-title"><i class="lg lg-recap"></i> Recaps <span class="text-muted small fw-normal">information shared with the team that isn't a loop</span></h6>
+                <table id="recapTable" class="loop-table recap-table"></table>
             </div>
         </div>
     </div>
@@ -144,6 +148,7 @@
                     <table class="table table-sm mb-0">
                         <tr><td><kbd>Space</kbd></td><td>Play / pause</td></tr>
                         <tr><td><kbd>N</kbd></td><td>New call-out at current time (pauses video)</td></tr>
+                        <tr><td><kbd>R</kbd></td><td>New recap at current time (information shared that isn't a loop, e.g. a team huddle or summary)</td></tr>
                         <tr><td><kbd>I</kbd></td><td>Add Information Check Back at current time</td></tr>
                         <tr><td><kbd>T</kbd></td><td>Add Task Completion Check Back at current time</td></tr>
                         <tr><td><kbd>C</kbd></td><td>Add Loop Closure at current time</td></tr>

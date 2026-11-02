@@ -8,6 +8,7 @@
     --information: #0aa2c0;
     --task_completion: #198754;
     --loop_closure: #6f42c1;
+    --recap: #fd7e14;
     --warn: #e0a800;
     --missing: #dc3545;
     --selection: rgba(13, 110, 253, 0.15);
@@ -128,7 +129,7 @@ kbd { font-size: 11px; padding: 1px 4px; }
 .timeline-scroll { overflow-x: auto; overflow-y: hidden; border: 1px solid var(--border); border-radius: 6px; }
 .timeline-inner {
     position: relative;
-    height: 96px;
+    height: 122px;
     min-width: 100%;
     cursor: crosshair;
     user-select: none;
@@ -141,6 +142,7 @@ kbd { font-size: 11px; padding: 1px 4px; }
 .lane { position: absolute; left: 0; right: 0; }
 .lane-callouts { top: 28px; height: 26px; }
 .lane-markers { top: 64px; height: 24px; }
+.lane-recaps { top: 94px; height: 24px; }
 
 .callout-bar {
     position: absolute;
@@ -421,3 +423,19 @@ kbd { font-size: 11px; padding: 1px 4px; }
 .picker-summary-inline { font-weight: 400; color: var(--muted); }
 .picker-actions { display: flex; justify-content: space-between; align-items: center; margin-top: 8px; }
 .loop-picker > input.form-control { margin: 4px 0; }
+
+/* Recaps: information shared that isn't a loop */
+.lg-recap { background: var(--recap); border-radius: 2px; width: 14px; }
+.recap-bar {
+    position: absolute; top: 0; height: 22px; background: var(--recap); opacity: 0.75; color: #fff;
+    font-size: 11px; font-weight: 600; line-height: 22px; padding: 0 3px; border-radius: 3px;
+    cursor: pointer; overflow: hidden; white-space: nowrap;
+}
+.recap-bar.active { opacity: 1; outline: 2px solid #000; z-index: 2; }
+.recap-bar:hover { opacity: 1; }
+.bd-recap { background: var(--recap); }
+.btn-recap { background: var(--recap); border-color: var(--recap); color: #fff; }
+.btn-recap:hover { background: #e8590c; border-color: #e8590c; color: #fff; }
+.btn-mk-recap { border-color: var(--recap); color: #c35a00; }
+.recap-table-title { margin: 16px 12px 6px; display: flex; align-items: center; gap: 6px; }
+.recap-table tbody tr { cursor: pointer; }

@@ -230,7 +230,7 @@ function deleteLoop(loop) {
 const RECAP_HELP = 'Information shared with the team that isn\'t a loop, e.g. a team huddle or a summary of the situation so far.';
 
 function sortedRecaps() {
-    return [...state.doc.recaps].sort((a, b) => a.start - b.start);
+    return [...state.doc.recaps].sort((a, b) => a.time - b.time);
 }
 
 function renumberRecaps() {
@@ -245,26 +245,23 @@ function setActiveRecap(recapId, { seek = false } = {}) {
     state.activeLoopId = null;
     state.activeRecapId = recapId;
     const recap = activeRecap();
-    if (seek && recap) state.player.seek(recap.start);
+    if (seek && recap) state.player.seek(recap.time);
     renderAll();
 }
 
-function createRecap(start, end = null, segmentIds = []) {
-    const recap = {
-        id: uid(), number: null, start: roundTime(start), end: end === null ? null : roundTime(end),
-        summary: segmentIds.length ? segmentsById(segmentIds).map(s => s.text).join(' ') : '',
-        segment_ids: segmentIds,
-    };
+function createRecap(time, segmentIds = []) {
+    const recap = { id: uid(), number: null, time: roundTime(time), title: '', message: '', segment_ids: segmentIds };
     state.doc.recaps.push(recap);
     renumberRecaps();
     state.activeLoopId = null;
     state.activeRecapId = recap.id;
     changed();
-    toast(`Recap R${recap.number} at ${formatTime(start)}`, 'success');
+    $('loopEditor').querySelector('input').focus();   // ready to type the title
+    toast(`Recap R${recap.number} at ${formatTime(time)}`, 'success');
 }
 
 function deleteRecap(recap) {
-    if (!confirm(`Delete recap R${recap.number} (${formatTime(recap.start)})?`)) return;
+    if (!confirm(`Delete recap R${recap.number} (${formatTime(recap.time)})?`)) return;
     state.doc.recaps = state.doc.recaps.filter(r => r.id !== recap.id);
     state.activeRecapId = null;
     renumberRecaps();
@@ -469,7 +466,7 @@ function exportDoc() {
             ...Object.fromEntries(fields().map(f => [f.key, loop[f.key]])),
         })),
         recaps: (renumberRecaps(), sortedRecaps()).map(r => ({
-            id: r.id, number: r.number, start: r.start, end: r.end, summary: r.summary, segment_ids: r.segment_ids || [],
+            id: r.id, number: r.number, time: r.time, title: r.title, message: r.message, segment_ids: r.segment_ids || [],
         })),
     };
 }
@@ -865,7 +862,7 @@ function newRecapAtPlayhead() {
     if (!state.player) return;
     state.player.pause();
     if (state.selection) {
-        createRecap(state.selection.start, state.selection.end, markSegments());
+        createRecap(state.selection.start, markSegments());
         clearSelection();
     } else {
         createRecap(state.player.getTime());
@@ -992,11 +989,10 @@ function renderTimeline() {
 
     const recapLane = el('div', { class: 'lane lane-recaps' });
     for (const recap of state.doc.recaps) {
-        const end = recap.end !== null ? recap.end : recap.start;
         recapLane.appendChild(el('div', {
             class: `recap-bar${recap.id === state.activeRecapId ? ' active' : ''}`,
-            style: `left:${pct(recap.start)}%;width:max(22px, ${pct(end - recap.start)}%)`,
-            title: `Recap R${recap.number} ${formatTime(recap.start)} ${recap.summary || ''}`,
+            style: `left:${pct(recap.time)}%;width:22px`,
+            title: `Recap R${recap.number} ${formatTime(recap.time)} ${recap.title || ''}`,
             onmousedown: e => e.stopPropagation(),
             onclick: e => { e.stopPropagation(); setActiveRecap(recap.id, { seek: true }); },
         }, `R${recap.number}`));
@@ -1072,7 +1068,7 @@ function renderSelectionBar() {
     bar.appendChild(el('button', { class: 'btn btn-sm btn-light', onclick: playSelection }, el('i', { class: 'fas fa-play' }), ' Play'));
     bar.appendChild(el('button', { class: 'btn btn-sm btn-success', onclick: () => { createLoop(sel.start, sel.end, markSegments()); clearSelection(); } },
         el('i', { class: 'fas fa-plus' }), ' New call-out'));
-    bar.appendChild(el('button', { class: 'btn btn-sm btn-outline-secondary btn-mk-recap', onclick: () => { createRecap(sel.start, sel.end, markSegments()); clearSelection(); } },
+    bar.appendChild(el('button', { class: 'btn btn-sm btn-outline-secondary btn-mk-recap', onclick: () => { createRecap(sel.start, markSegments()); clearSelection(); } },
         el('i', { class: 'fas fa-plus' }), ' New recap'));
     if (loop) {
         bar.appendChild(el('button', {
@@ -1147,7 +1143,7 @@ function segmentBadges() {
         }
     }
     for (const recap of state.doc.recaps) {
-        add(recap.segment_ids, recap.start, { recap, kind: 'recap', text: `R${recap.number} recap` });
+        add(recap.segment_ids, recap.time, { recap, kind: 'recap', text: `R${recap.number} recap` });
     }
     return badges;
 }
@@ -1540,24 +1536,22 @@ function renderNotes(loop, field) {
 function renderRecapEditor(recap) {
     const editor = $('loopEditor');
     editor.appendChild(el('div', { class: 'editor-header' },
-        el('h5', { class: 'mb-0' }, `Recap R${recap.number}`),
+        el('h5', { class: 'mb-0' }, `Recap R${recap.number} `, helpIcon(RECAP_HELP)),
         el('div', {},
-            el('button', { class: 'btn btn-sm btn-light', title: 'Close editor', onclick: () => setActiveRecap(null) }, el('i', { class: 'fas fa-times' })),
+            el('button', { class: 'btn btn-sm btn-link', title: 'Jump here', onclick: () => state.player.seek(recap.time) }, formatTime(recap.time, true)),
+            el('button', {
+                class: 'btn btn-sm btn-light', title: 'Set to the current moment',
+                onclick: () => { recap.time = roundTime(state.player.getTime()); renumberRecaps(); changed(); },
+            }, el('i', { class: 'fas fa-stopwatch' })),
+            el('button', { class: 'btn btn-sm btn-light ms-2', title: 'Close editor', onclick: () => setActiveRecap(null) }, el('i', { class: 'fas fa-times' })),
             el('button', { class: 'btn btn-sm btn-outline-danger ms-2', title: 'Delete recap', onclick: () => deleteRecap(recap) }, el('i', { class: 'fas fa-trash' })))));
-    const summary = el('textarea', { class: 'form-control form-control-sm', rows: '3', placeholder: 'What was shared? (a few words)' });
-    summary.value = recap.summary;
-    summary.addEventListener('input', () => { recap.summary = summary.value; changed({ structural: false }); });
-    editor.appendChild(el('div', { class: 'field' },
-        el('div', { class: 'field-label' }, 'Recap (timestamp) ', helpIcon(RECAP_HELP)),
-        el('div', { class: 'callout-times' },
-            el('label', { text: 'Start' }),
-            timeInput(recap.start, t => { if (t !== null) { recap.start = t; renumberRecaps(); changed(); } }),
-            el('button', { class: 'btn btn-sm btn-light', title: 'Set start to current time', onclick: () => { recap.start = roundTime(state.player.getTime()); renumberRecaps(); changed(); } }, el('i', { class: 'fas fa-stopwatch' })),
-            el('label', { text: 'End' }),
-            timeInput(recap.end, t => { recap.end = t; changed(); }, 'optional'),
-            el('button', { class: 'btn btn-sm btn-light', title: 'Set end to current time', onclick: () => { recap.end = roundTime(state.player.getTime()); changed(); } }, el('i', { class: 'fas fa-stopwatch' })),
-            el('button', { class: 'btn btn-sm btn-dark', title: 'Play from recap', onclick: () => { state.player.seek(recap.start); state.player.play(); } }, el('i', { class: 'fas fa-play' }))),
-        summary));
+    const title = el('input', { class: 'form-control form-control-sm', value: recap.title, placeholder: 'Title' });
+    title.addEventListener('input', () => { recap.title = title.value; changed({ structural: false }); });
+    const message = el('textarea', { class: 'form-control form-control-sm', rows: '4', placeholder: 'Message' });
+    message.value = recap.message;
+    message.addEventListener('input', () => { recap.message = message.value; changed({ structural: false }); });
+    editor.appendChild(el('div', { class: 'field' }, el('div', { class: 'field-label' }, 'Title'), title));
+    editor.appendChild(el('div', { class: 'field' }, el('div', { class: 'field-label' }, 'Message'), message));
 }
 
 function renderLoopEditor() {
@@ -1727,9 +1721,9 @@ function renderRecapTable() {
     table.innerHTML = '';
     table.appendChild(el('thead', {}, el('tr', {},
         el('th', { class: 'col-num', text: '#' }),
-        el('th', { class: 'col-callout', text: 'Recap (timestamp)' }),
-        el('th', { text: 'End' }),
-        el('th', { text: 'What was shared' }))));
+        el('th', { class: 'col-callout', text: 'Time' }),
+        el('th', { text: 'Title' }),
+        el('th', { text: 'Message' }))));
     const tbody = el('tbody');
     const recaps = sortedRecaps();
     if (!recaps.length) {
@@ -1738,9 +1732,9 @@ function renderRecapTable() {
     for (const recap of recaps) {
         tbody.appendChild(el('tr', { class: recap.id === state.activeRecapId ? 'active' : '', onclick: () => setActiveRecap(recap.id, { seek: true }) },
             el('td', { class: 'col-num', text: `R${recap.number}` }),
-            el('td', { class: 'col-callout', text: formatTime(recap.start) }),
-            el('td', { text: recap.end === null ? '' : formatTime(recap.end) }),
-            el('td', { class: 'cell-notes', text: recap.summary })));
+            el('td', { class: 'col-callout', text: formatTime(recap.time) }),
+            el('td', { text: recap.title }),
+            el('td', { class: 'cell-notes', text: recap.message })));
     }
     table.appendChild(tbody);
 }

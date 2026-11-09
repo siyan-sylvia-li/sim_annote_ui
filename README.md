@@ -162,7 +162,7 @@ Whisper needs a GPU, so transcripts are made on Google Colab and then imported:
 
 Recordings with one mic per person get their speakers from the file names; speech picked up on other people's mics is kept only where it was loudest (`transcription.py`). For single-mic recordings, assign speakers in the app. `colab_transcribe.py --audio <files>` also works on audio already on the machine.
 
-**Import transcript** also accepts plain Whisper output (with `segments`) or the labels exported from the original app. It appears under the player; click a segment (Shift+click for a range) to select it, and assign speakers from the menu on each segment. Labels created from selected segments store their ids (`segment_ids`), linking each call-out and check back to its utterances.
+**Import transcript** also accepts plain Whisper output (with `segments`) or the labels exported from the original app. It appears under the player; click a segment (Shift+click for a range) to select it, and assign speakers from the menu on each segment. Labels created from selected segments store their ids (`segment_ids`), linking each call-out and check-back to its utterances.
 
 ### Videos (syncing a session's video with its audio)
 
@@ -184,7 +184,7 @@ Annotations go to `data/annotations/` (change with `--annotations-root`).
 
 ### Using the app
 
-- **Selecting**: drag on the timeline, or click transcript segments, then press `N` / `I` / `T` / `C` or use the buttons that appear.
+- **Selecting**: drag on the timeline, or click transcript segments, then press `N` / `M` / `T` / `C` or use the buttons that appear.
 - **Coding scheme**: `schemes/clc.json` defines the columns, options, help text (from the CLC Audio Tagging Training Guide) and consistency warnings. The form, the timeline and the table are all generated from it.
 - **Loops table**: the **Loops table** button opens all call-outs in the recording sheet's layout; cells there can be edited too.
-- **Shortcuts**: `Space` play/pause · `N` new call-out · `I` / `T` / `C` add Information Check Back / Task Completion Check Back / Loop Closure at the current time · `←`/`→` seek 5s (Shift: 1s) · `[` / `]` previous/next call-out.
+- **Shortcuts**: `Space` play/pause · `N` new call-out · `M` / `T` / `C` add Message Acknowledgement Check-back / Terminal Check-back / Loop Closure at the current time · `←`/`→` seek 5s (Shift: 1s) · `[` / `]` previous/next call-out.

@@ -26,13 +26,19 @@
     },
     {
       "key": "direction",
-      "label": "Call Out Direction",
+      "label": "Recipient Specificity",
       "type": "choice",
       "required": true,
-      "help": "Name/Title if the initiator included someone's name or title; otherwise Undirected.",
+      "help": "Name/Title if the initiator included/implied someone's name or title; otherwise Unspecified",
       "options": [
-        { "value": "name_title", "label": "Name/Title" },
-        { "value": "undirected", "label": "Undirected" }
+        { "value": "specified", "label": "Specified Recipient",
+          "details": [
+            { "key": "name", "label": "Name", "placeholder": "e.g. Sarah" },
+            { "key": "title", "label": "Title", "placeholder": "e.g. Med nurse" },
+            { "key": "pronoun", "label": "Pronoun", "placeholder": "e.g. you" }
+          ] },
+        { "value": "implied", "label": "Implied Recipient" },
+        { "value": "unspecified", "label": "Unspecified" }
       ]
     },
     {
@@ -77,19 +83,27 @@
     },
     {
       "key": "verbal_check_back",
-      "label": "Verbal Check Back (timestamp)",
+      "label": "Verbal Check-back (timestamp)",
       "type": "timestamps",
-      "help": "For double/multiple loops, add every check back to the same loop, each with its own timestamp.",
+      "help": "For double/multiple loops, add every check-back to the same loop, each with its own timestamp.",
       "lists": [
         {
           "key": "information",
-          "label": "Information Check Back",
-          "hotkey": "i",
-          "help": "Info seeking: the answer to the question. Task: the recipient acknowledging the request."
+          "label": "Message Acknowledgement Check-back",
+          "short": "Message ack",
+          "hotkey": "m",
+          "help": "Info seeking: the answer to the question. Task: the recipient acknowledging the request.",
+          "options": [
+            { "value": "repetition", "label": "Repetition", "short": "Rep" },
+            { "value": "paraphrasing", "label": "Paraphrasing", "short": "Par" },
+            { "value": "clarification", "label": "Clarification", "short": "Clf" },
+            { "value": "utterance", "label": "Utterance", "short": "Utt" }
+          ]
         },
         {
           "key": "task_completion",
-          "label": "Task Completion Check Back",
+          "label": "Terminal Check-back",
+          "short": "Terminal",
           "hotkey": "t",
           "help": "Recipient acknowledging they completed the task. Never present for information-seeking call-outs."
         }
@@ -100,7 +114,7 @@
       "label": "Task Completion",
       "type": "choice",
       "required": true,
-      "help": "Use check backs and other cues (e.g. hearing CPR being performed). For information seeking, Full if the question was answered.",
+      "help": "Use check-backs and other cues (e.g. hearing CPR being performed). For information seeking, Full if the question was answered.",
       "options": [
         { "value": "full", "label": "Full Task Completion", "short": "Full" },
         { "value": "partial", "label": "Partial Task Completion", "short": "Partial" },
@@ -111,9 +125,9 @@
       "key": "loop_closure",
       "label": "Loop Closure (timestamp)",
       "type": "timestamps",
-      "help": "The initiator acknowledging receipt of the check back. Double/multiple loops: one entry per closure.",
+      "help": "The initiator acknowledging receipt of the check-back. Double/multiple loops: one entry per closure.",
       "lists": [
-        { "key": "closure", "label": "Loop Closure", "hotkey": "c" }
+        { "key": "closure", "label": "Loop Closure", "short": "Closure", "hotkey": "c" }
       ]
     },
     {
@@ -130,12 +144,12 @@
   ],
   "rules": [
     {
-      "message": "Information-seeking call-outs don't have a Task Completion Check Back.",
+      "message": "Information-seeking call-outs don't have a Terminal Check-back.",
       "when": [{ "field": "content_domain", "equals": "information_seeking" }],
       "expect": [{ "field": "verbal_check_back.task_completion", "empty": true }]
     },
     {
-      "message": "Information-seeking call-out was answered (has an Information Check Back), so Task Completion should be Full.",
+      "message": "Information-seeking call-out was answered (has a Message Acknowledgement Check-back), so Task Completion should be Full.",
       "when": [
         { "field": "content_domain", "equals": "information_seeking" },
         { "field": "verbal_check_back.information", "empty": false }
@@ -143,12 +157,12 @@
       "expect": [{ "field": "task_completion", "equals": "full" }]
     },
     {
-      "message": "A directed (Name/Title) call-out should have a specific recipient, not Unspecified (group) or Unknown.",
-      "when": [{ "field": "direction", "equals": "name_title" }],
+      "message": "A call-out with a Specified Recipient should have a specific recipient, not Unspecified (group) or Unknown.",
+      "when": [{ "field": "direction", "equals": "specified" }],
       "expect": [{ "field": "recipient", "not_in": ["unspecified_group", "unknown"] }]
     },
     {
-      "message": "Loop Closure is the initiator acknowledging a check back, but there is no Verbal Check Back.",
+      "message": "Loop Closure is the initiator acknowledging a check-back, but there is no Verbal Check-back.",
       "when": [{ "field": "loop_closure", "empty": false }],
       "expect": [{ "any": [
         { "field": "verbal_check_back.information", "empty": false },
@@ -156,7 +170,7 @@
       ] }]
     },
     {
-      "message": "Single loop has more than one Task Completion Check Back. Should this be a Double/Multiple loop?",
+      "message": "Single loop has more than one Terminal Check-back. Should this be a Double/Multiple loop?",
       "when": [{ "field": "loop_opened", "equals": "single" }],
       "expect": [{ "field": "verbal_check_back.task_completion", "max_count": 1 }]
     }

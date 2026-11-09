@@ -126,13 +126,47 @@ function getPath(loop, path) {
 
 function getList(loop, path) { return getPath(loop, path); }
 
+// Short name for badges and buttons, e.g. "Message ack" for Message Acknowledgement Check-back
+function shortLabel(list) { return list.short || list.label; }
+
+// A timestamp list can have sub-options (e.g. Message Acknowledgement → Repetition, Paraphrasing…);
+// each entry stores the chosen one as `type`
+function typeLabel(list, entry, short = false) {
+    const opt = list.options && list.options.find(o => o.value === entry.type);
+    return opt ? (short && opt.short) || opt.label : '';
+}
+
+function typeButtons(list, current, onPick) {
+    return el('div', { class: 'choice-wrap ts-options' }, ...list.options.map(opt => el('button', {
+        class: `choice-btn${current === opt.value ? ' selected' : ''}`,
+        onclick: () => onPick(current === opt.value ? null : opt.value),
+    }, opt.label)));
+}
+
+// A choice option can have optional text subfields ("details", e.g. Specified Recipient → name,
+// title, pronoun). They're stored next to the choice as `<field>_details`, null for other options.
+function detailsKey(field) { return `${field.key}_details`; }
+
+function hasDetails(field) { return field.options.some(o => o.details); }
+
+function setChoice(loop, field, value) {
+    loop[field.key] = value;
+    if (!hasDetails(field)) return;
+    const opt = field.options.find(o => o.value === value);
+    const old = loop[detailsKey(field)] || {};
+    loop[detailsKey(field)] = opt && opt.details ? Object.fromEntries(opt.details.map(d => [d.key, old[d.key] || ''])) : null;
+}
+
 function newLoop(start, end = null, segmentIds = []) {
     const loop = {
         id: uid(),
         callout: { number: null, start: roundTime(start), end: end === null ? null : roundTime(end), summary: '', segment_ids: segmentIds },
     };
     for (const field of fields()) {
-        if (field.type === 'choice') loop[field.key] = null;
+        if (field.type === 'choice') {
+            loop[field.key] = null;
+            if (hasDetails(field)) loop[detailsKey(field)] = null;
+        }
         else if (field.type === 'timestamps') {
             if (field.lists.length === 1) loop[field.key] = [];
             else loop[field.key] = Object.fromEntries(field.lists.map(l => [l.key, []]));
@@ -268,29 +302,29 @@ function deleteRecap(recap) {
     changed();
 }
 
-function addTimestamp(path, time, segmentIds = [], loop = activeLoop(), note = '') {
+function addTimestamp(path, time, segmentIds = [], loop = activeLoop(), note = '', type = null) {
     if (!loop) {
         toast('Open a call-out first (press N or click one on the timeline)', 'warning');
         return;
     }
     const list = getList(loop, path);
-    list.push({ time: roundTime(time), note, segment_ids: segmentIds });
+    const { list: def } = timestampLists().find(t => t.path === path);
+    list.push(def.options ? { time: roundTime(time), type, note, segment_ids: segmentIds } : { time: roundTime(time), note, segment_ids: segmentIds });
     list.sort((a, b) => a.time - b.time);
     changed();
-    const entry = timestampLists().find(t => t.path === path);
-    toast(`${entry.list.label} at ${formatTime(time)} → call-out #${loop.callout.number}`, 'success');
+    toast(`${def.label} at ${formatTime(time)} → call-out #${loop.callout.number}`, 'success');
 }
 
 // ---------- "Which call-out?" picker for check backs and closures ----------
 //
-// A check back often belongs to an earlier call-out than the one being edited, so I / T / C (and
+// A check back often belongs to an earlier call-out than the one being edited, so M / T / C (and
 // the selection bar's buttons) ask which call-out to attach it to instead of assuming the open one.
 // The moment is taken when the key is pressed, so playback can keep running while choosing.
 
 function summarizeLoop(loop) {
     const parts = timestampLists().map(({ path, list }) => {
         const n = getList(loop, path).length;
-        return n ? `${n} ${list.label.replace(' Check Back', ' CB').replace('Loop Closure', 'closure')}` : null;
+        return n ? `${n} ${shortLabel(list)}` : null;
     }).filter(Boolean);
     return parts.length ? parts.join(' · ') : 'nothing added yet';
 }
@@ -338,7 +372,12 @@ function showNoteStep(path, time, segmentIds, loop, label, kind, candidates) {
     const panel = $('loopPicker');
     panel.innerHTML = '';
     const note = el('input', { class: 'form-control', placeholder: 'note (optional), e.g. "ok", "epi given"' });
-    const add = () => { closeLoopPicker(); addTimestamp(path, time, segmentIds, loop, note.value.trim()); };
+    const { list } = timestampLists().find(t => t.path === path);
+    let type = null;
+    const types = list.options ? el('div') : null;
+    const renderTypes = () => { types.replaceChildren(typeButtons(list, type, value => { type = value; renderTypes(); note.focus(); })); };
+    if (types) renderTypes();
+    const add = () => { closeLoopPicker(); addTimestamp(path, time, segmentIds, loop, note.value.trim(), type); };
     note.addEventListener('keydown', e => {
         if (e.key === 'Enter') { e.preventDefault(); add(); }
         else if (e.key === 'Escape') { e.preventDefault(); closeLoopPicker(); }
@@ -347,12 +386,13 @@ function showNoteStep(path, time, segmentIds, loop, label, kind, candidates) {
         el('div', { class: 'picker-title' }, el('i', { class: `lg lg-${kind}` }),
             ` ${label} at ${formatTime(time, true)} → call-out #${loop.callout.number}`,
             loop.callout.summary ? el('span', { class: 'picker-summary-inline', text: ` (${loop.callout.summary})` }) : null),
+        types,
         note,
         el('div', { class: 'picker-actions' },
             candidates ? el('button', { class: 'btn btn-sm btn-link', onclick: () => openLoopPicker(path, time, segmentIds, candidates) },
                 el('i', { class: 'fas fa-arrow-left' }), ' Other call-out') : el('span'),
             el('button', { class: 'btn btn-sm btn-primary', onclick: add }, 'Add')),
-        el('div', { class: 'picker-hint' }, 'Enter to add (the note is optional) · Esc to cancel'));
+        el('div', { class: 'picker-hint' }, `Enter to add (${types ? 'the type and note are' : 'the note is'} optional) · Esc to cancel`));
     state.picker = { step: 'note', add };
     note.focus();
 }
@@ -463,7 +503,9 @@ function exportDoc() {
                 number: loop.callout.number, start: loop.callout.start, end: loop.callout.end,
                 summary: loop.callout.summary, segment_ids: loop.callout.segment_ids || [],
             },
-            ...Object.fromEntries(fields().map(f => [f.key, loop[f.key]])),
+            ...Object.fromEntries(fields().flatMap(f => (f.type === 'choice' && hasDetails(f)
+                ? [[f.key, loop[f.key]], [detailsKey(f), loop[detailsKey(f)] || null]]
+                : [[f.key, loop[f.key]]]))),
         })),
         recaps: (renumberRecaps(), sortedRecaps()).map(r => ({
             id: r.id, number: r.number, time: r.time, title: r.title, message: r.message, segment_ids: r.segment_ids || [],
@@ -971,7 +1013,7 @@ function renderTimeline() {
                 markerLane.appendChild(el('div', {
                     class: `marker mk-${kind}${active ? ' active' : ''}`,
                     style: `left:${pct(entry.time)}%`,
-                    title: `#${loop.callout.number} ${list.label} ${formatTime(entry.time)}${entry.note ? ' – ' + entry.note : ''}`,
+                    title: `#${loop.callout.number} ${list.label}${typeLabel(list, entry) ? ' (' + typeLabel(list, entry) + ')' : ''} ${formatTime(entry.time)}${entry.note ? ' – ' + entry.note : ''}`,
                     onmousedown: e => e.stopPropagation(),
                     onclick: e => { e.stopPropagation(); setActive(loop.id); state.player.seek(entry.time); },
                 }));
@@ -1090,8 +1132,9 @@ function renderSelectionBar() {
             const kind = path.split('.').pop();
             bar.appendChild(el('button', {
                 class: `btn btn-sm btn-outline-secondary btn-mk-${kind}`,
+                title: `Add ${list.label}`,
                 onclick: () => { chooseLoopThenAdd(path, sel.start, markSegments()); clearSelection(); },
-            }, `+ ${list.label}`));
+            }, `+ ${shortLabel(list)}`));
         }
     }
     bar.appendChild(el('button', { class: 'btn btn-sm btn-link ms-auto', onclick: clearSelection, title: 'Clear (Esc)' }, el('i', { class: 'fas fa-times' })));
@@ -1138,7 +1181,7 @@ function segmentBadges() {
         for (const { path, list } of timestampLists()) {
             const kind = path.split('.').pop();
             for (const entry of getList(loop, path)) {
-                add(entry.segment_ids, entry.time, { loop, kind, text: `#${n} ${list.label.replace(' Check Back', ' CB')}` });
+                add(entry.segment_ids, entry.time, { loop, kind, text: `#${n} ${shortLabel(list)}` });
             }
         }
     }
@@ -1475,8 +1518,20 @@ function renderChoice(loop, field) {
         const selected = loop[field.key] === opt.value;
         groupNode.appendChild(el('button', {
             class: `choice-btn${selected ? ' selected' : ''}`,
-            onclick: () => { loop[field.key] = selected ? null : opt.value; changed(); },
+            onclick: () => { setChoice(loop, field, selected ? null : opt.value); changed(); },
         }, opt.label));
+    }
+    const chosen = field.options.find(o => o.value === loop[field.key]);
+    if (chosen && chosen.details) {
+        if (!loop[detailsKey(field)]) setChoice(loop, field, chosen.value);
+        const details = loop[detailsKey(field)];
+        const box = el('div', { class: 'choice-details' });
+        for (const d of chosen.details) {
+            const input = el('input', { class: 'form-control form-control-sm', value: details[d.key] || '', placeholder: d.placeholder || '(optional)' });
+            input.addEventListener('input', () => { details[d.key] = input.value; changed({ structural: false }); });
+            box.appendChild(el('label', { class: 'choice-detail' }, el('span', { text: d.label }), input));
+        }
+        return el('div', {}, wrap, box);
     }
     return wrap;
 }
@@ -1501,6 +1556,7 @@ function renderTimestamps(loop, field) {
                 }, el('i', { class: 'fas fa-stopwatch' })),
                 note,
                 el('button', { class: 'btn btn-sm btn-link text-danger', title: 'Remove', onclick: () => { entries.splice(idx, 1); changed(); } }, el('i', { class: 'fas fa-times' }))));
+            if (list.options) block.appendChild(typeButtons(list, entry.type, value => { entry.type = value; changed(); }));
         });
         block.appendChild(el('button', {
             class: `btn btn-sm btn-outline-secondary mark-btn btn-mk-${kind}`,
@@ -1686,15 +1742,16 @@ function renderTable() {
         for (const col of cols) {
             if (col.kind === 'choice') {
                 const on = loop[col.field.key] === col.opt.value;
+                const details = on && col.opt.details ? col.opt.details.map(d => (loop[detailsKey(col.field)] || {})[d.key]).filter(Boolean).join(', ') : '';
                 row.appendChild(el('td', {
                     class: `cell-y${on ? ' on' : ''}${isEmpty(loop[col.field.key]) ? ' empty-field' : ''}`,
                     title: `${col.field.label}: ${col.label}`,
-                    onclick: () => { loop[col.field.key] = on ? null : col.opt.value; state.activeLoopId = loop.id; state.activeRecapId = null; changed(); },
-                }, on ? 'Y' : ''));
+                    onclick: () => { setChoice(loop, col.field, on ? null : col.opt.value); state.activeLoopId = loop.id; state.activeRecapId = null; changed(); },
+                }, on ? 'Y' : '', details ? el('div', { class: 'cell-sub', text: details }) : null));
             } else if (col.kind === 'timestamps') {
                 const entries = getList(loop, col.path);
                 row.appendChild(el('td', { class: 'cell-ts', onclick: () => setActive(loop.id) },
-                    ...entries.map(e => el('div', { text: `y (${e.note ? e.note + ' ' : ''}${formatTime(e.time)})` }))));
+                    ...entries.map(e => el('div', { text: `y (${typeLabel(col.list, e) ? typeLabel(col.list, e) + ': ' : ''}${e.note ? e.note + ' ' : ''}${formatTime(e.time)})` }))));
             } else if (col.kind === 'notes') {
                 const notes = loop[col.field.key];
                 const tagLabels = notes.tags.map(v => (col.field.tags.find(t => t.value === v) || { label: v }).label);

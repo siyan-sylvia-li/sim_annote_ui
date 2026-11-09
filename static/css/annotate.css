@@ -439,3 +439,12 @@ kbd { font-size: 11px; padding: 1px 4px; }
 .btn-mk-recap { border-color: var(--recap); color: #c35a00; }
 .recap-table-title { margin: 16px 12px 6px; display: flex; align-items: center; gap: 6px; }
 .recap-table tbody tr { cursor: pointer; }
+
+/* Optional text subfields of a choice (Specified Recipient → name / title / pronoun) */
+.choice-details { display: grid; gap: 4px; margin-top: 6px; padding-left: 8px; border-left: 2px solid var(--accent); max-width: 320px; }
+.choice-detail { display: grid; grid-template-columns: 64px 1fr; align-items: center; gap: 6px; margin: 0; font-size: 12px; color: var(--muted); }
+
+/* Sub-options of a check-back (Message Acknowledgement → Repetition, Paraphrasing…) */
+.ts-options { margin: -2px 0 6px 18px; }
+.ts-options .choice-btn { font-size: 11px; padding: 1px 7px; }
+.loop-picker > .choice-wrap { margin-bottom: 6px; }

@@ -25,18 +25,21 @@
       ]
     },
     {
-      "key": "direction",
+      "key": "recipient_specificity",
       "label": "Recipient Specificity",
       "type": "choice",
       "required": true,
       "help": "Name/Title if the initiator included/implied someone's name or title; otherwise Unspecified",
       "options": [
         { "value": "specified", "label": "Specified Recipient",
-          "details": [
-            { "key": "name", "label": "Name", "placeholder": "e.g. Sarah" },
-            { "key": "title", "label": "Title", "placeholder": "e.g. Med nurse" },
-            { "key": "pronoun", "label": "Pronoun", "placeholder": "e.g. you" }
-          ] },
+          "details": {
+            "label": "Specified by (pick one)",
+            "options": [
+              { "value": "name", "label": "Name", "placeholder": "Name used, e.g. Sarah (optional)" },
+              { "value": "title", "label": "Title", "placeholder": "Title used, e.g. Med nurse (optional)" },
+              { "value": "pronoun", "label": "Pronoun", "placeholder": "Pronoun used, e.g. you (optional)" }
+            ]
+          } },
         { "value": "implied", "label": "Implied Recipient" },
         { "value": "unspecified", "label": "Unspecified" }
       ]
@@ -52,19 +55,15 @@
       ]
     },
     {
-      "key": "recipient",
-      "label": "Intended/Assumed Recipient",
+      "key": "responder_alignment",
+      "label": "Responder Alignment",
       "type": "choice",
       "required": true,
-      "help": "Directed: the named recipient. Undirected: the assumed recipient; Unspecified (group) if aimed at the group, Unknown if it can't be assumed.",
       "options": [
-        { "value": "team_leader", "label": "Team Leader", "short": "TL" },
-        { "value": "med_nurse", "label": "Med Nurse", "short": "Med" },
-        { "value": "cpr_personnel", "label": "CPR Personnel", "short": "CPR" },
-        { "value": "airway", "label": "Airway" },
-        { "value": "documenting_nurse", "label": "Documenting Nurse", "short": "Doc" },
-        { "value": "unspecified_group", "label": "Unspecified (group)", "short": "Group" },
-        { "value": "unknown", "label": "Unknown" }
+        { "value": "explicitly_aligned", "label": "Explicitly Aligned Responder", "short": "Explicit" },
+        { "value": "implicitly_aligned", "label": "Implicitly Aligned Responder", "short": "Implicit" },
+        { "value": "unaligned", "label": "Unaligned Responder", "short": "Unaligned" },
+        { "value": "indeterminate", "label": "Indeterminate Alignment", "short": "Indeterminate" }
       ]
     },
     {
@@ -138,7 +137,8 @@
       "tags": [
         { "value": "linked_loop", "label": "Linked Loop" },
         { "value": "sequentially_independent_loop", "label": "Sequentially Independent Loop" },
-        { "value": "sequentially_dependent_loop", "label": "Sequentially Dependent Loop" }
+        { "value": "sequentially_dependent_loop", "label": "Sequentially Dependent Loop" },
+        { "value": "group_loop", "label": "Group Loop" }
       ]
     }
   ],
@@ -155,11 +155,6 @@
         { "field": "verbal_check_back.information", "empty": false }
       ],
       "expect": [{ "field": "task_completion", "equals": "full" }]
-    },
-    {
-      "message": "A call-out with a Specified Recipient should have a specific recipient, not Unspecified (group) or Unknown.",
-      "when": [{ "field": "direction", "equals": "specified" }],
-      "expect": [{ "field": "recipient", "not_in": ["unspecified_group", "unknown"] }]
     },
     {
       "message": "Loop Closure is the initiator acknowledging a check-back, but there is no Verbal Check-back.",

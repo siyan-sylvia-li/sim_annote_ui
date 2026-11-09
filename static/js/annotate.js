@@ -143,8 +143,9 @@ function typeButtons(list, current, onPick) {
     }, opt.label)));
 }
 
-// A choice option can have optional text subfields ("details", e.g. Specified Recipient → name,
-// title, pronoun). They're stored next to the choice as `<field>_details`, null for other options.
+// A choice option can have an optional follow-up ("details", e.g. Specified Recipient → specified
+// by Name OR Title OR Pronoun, plus what was said). Stored next to the choice as
+// `<field>_details` = {by, text}, null when another option is picked.
 function detailsKey(field) { return `${field.key}_details`; }
 
 function hasDetails(field) { return field.options.some(o => o.details); }
@@ -153,8 +154,12 @@ function setChoice(loop, field, value) {
     loop[field.key] = value;
     if (!hasDetails(field)) return;
     const opt = field.options.find(o => o.value === value);
-    const old = loop[detailsKey(field)] || {};
-    loop[detailsKey(field)] = opt && opt.details ? Object.fromEntries(opt.details.map(d => [d.key, old[d.key] || ''])) : null;
+    loop[detailsKey(field)] = opt && opt.details ? loop[detailsKey(field)] || { by: null, text: '' } : null;
+}
+
+function detailsSummary(opt, details) {
+    const by = details && opt.details.options.find(o => o.value === details.by);
+    return by ? `${by.label}${details.text ? ': ' + details.text : ''}` : '';
 }
 
 function newLoop(start, end = null, segmentIds = []) {
@@ -1525,11 +1530,20 @@ function renderChoice(loop, field) {
     if (chosen && chosen.details) {
         if (!loop[detailsKey(field)]) setChoice(loop, field, chosen.value);
         const details = loop[detailsKey(field)];
-        const box = el('div', { class: 'choice-details' });
-        for (const d of chosen.details) {
-            const input = el('input', { class: 'form-control form-control-sm', value: details[d.key] || '', placeholder: d.placeholder || '(optional)' });
-            input.addEventListener('input', () => { details[d.key] = input.value; changed({ structural: false }); });
-            box.appendChild(el('label', { class: 'choice-detail' }, el('span', { text: d.label }), input));
+        const group = `details-${loop.id}-${field.key}`;
+        const radios = el('div', { class: 'details-radios' }, ...chosen.details.options.map(o => {
+            const radio = el('input', { type: 'radio', name: group, class: 'form-check-input' });
+            radio.checked = details.by === o.value;
+            // Only one applies, so switching clears what was typed for the other
+            radio.addEventListener('change', () => { details.by = o.value; details.text = ''; changed(); });
+            return el('label', { class: `details-radio${details.by === o.value ? ' selected' : ''}` }, radio, el('span', { text: o.label }));
+        }));
+        const box = el('div', { class: 'choice-details' }, el('div', { class: 'details-label', text: chosen.details.label }), radios);
+        const by = chosen.details.options.find(o => o.value === details.by);
+        if (by) {
+            const input = el('input', { class: 'form-control form-control-sm', value: details.text || '', placeholder: by.placeholder || '(optional)' });
+            input.addEventListener('input', () => { details.text = input.value; changed({ structural: false }); });
+            box.appendChild(input);
         }
         return el('div', {}, wrap, box);
     }
@@ -1742,7 +1756,7 @@ function renderTable() {
         for (const col of cols) {
             if (col.kind === 'choice') {
                 const on = loop[col.field.key] === col.opt.value;
-                const details = on && col.opt.details ? col.opt.details.map(d => (loop[detailsKey(col.field)] || {})[d.key]).filter(Boolean).join(', ') : '';
+                const details = on && col.opt.details ? detailsSummary(col.opt, loop[detailsKey(col.field)]) : '';
                 row.appendChild(el('td', {
                     class: `cell-y${on ? ' on' : ''}${isEmpty(loop[col.field.key]) ? ' empty-field' : ''}`,
                     title: `${col.field.label}: ${col.label}`,

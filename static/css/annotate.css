@@ -440,9 +440,13 @@ kbd { font-size: 11px; padding: 1px 4px; }
 .recap-table-title { margin: 16px 12px 6px; display: flex; align-items: center; gap: 6px; }
 .recap-table tbody tr { cursor: pointer; }
 
-/* Optional text subfields of a choice (Specified Recipient → name / title / pronoun) */
-.choice-details { display: grid; gap: 4px; margin-top: 6px; padding-left: 8px; border-left: 2px solid var(--accent); max-width: 320px; }
-.choice-detail { display: grid; grid-template-columns: 64px 1fr; align-items: center; gap: 6px; margin: 0; font-size: 12px; color: var(--muted); }
+/* Follow-up of a choice (Specified Recipient → by Name OR Title OR Pronoun) */
+.choice-details { display: grid; gap: 6px; margin-top: 6px; padding: 6px 8px; border-left: 2px solid var(--accent); background: #f5f8ff; border-radius: 0 6px 6px 0; max-width: 340px; }
+.details-label { font-size: 12px; color: var(--muted); }
+.details-radios { display: flex; gap: 6px; }
+.details-radio { display: inline-flex; align-items: center; gap: 5px; margin: 0; padding: 3px 10px; border: 1px solid var(--border); border-radius: 14px; background: #fff; font-size: 12px; cursor: pointer; }
+.details-radio .form-check-input { margin: 0; }
+.details-radio.selected { border-color: var(--accent); background: #e7f0ff; font-weight: 600; }
 
 /* Sub-options of a check-back (Message Acknowledgement → Repetition, Paraphrasing…) */
 .ts-options { margin: -2px 0 6px 18px; }

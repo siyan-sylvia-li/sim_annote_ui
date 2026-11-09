@@ -443,7 +443,7 @@ kbd { font-size: 11px; padding: 1px 4px; }
 /* Follow-up of a choice (Specified Recipient → by Name OR Title OR Pronoun) */
 .choice-details { display: grid; gap: 6px; margin-top: 6px; padding: 6px 8px; border-left: 2px solid var(--accent); background: #f5f8ff; border-radius: 0 6px 6px 0; max-width: 340px; }
 .details-label { font-size: 12px; color: var(--muted); }
-.details-radios { display: flex; gap: 6px; }
+.details-radios { display: flex; flex-wrap: wrap; gap: 6px; }
 .details-radio { display: inline-flex; align-items: center; gap: 5px; margin: 0; padding: 3px 10px; border: 1px solid var(--border); border-radius: 14px; background: #fff; font-size: 12px; cursor: pointer; }
 .details-radio .form-check-input { margin: 0; }
 .details-radio.selected { border-color: var(--accent); background: #e7f0ff; font-weight: 600; }

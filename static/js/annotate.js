@@ -143,9 +143,10 @@ function typeButtons(list, current, onPick) {
     }, opt.label)));
 }
 
-// A choice option can have an optional follow-up ("details", e.g. Specified Recipient → specified
-// by Name OR Title OR Pronoun, plus what was said). Stored next to the choice as
-// `<field>_details` = {by, text}, null when another option is picked.
+// A choice option can have an optional pick-one follow-up ("details"), e.g. Specified Recipient →
+// by Name OR Title OR Pronoun (plus what was said, when `text` is on), or Explicitly Aligned
+// Responder → which role. Stored next to the choice as `<field>_details` = {<details.key>: value
+// [, text]}, null when an option without details is picked.
 function detailsKey(field) { return `${field.key}_details`; }
 
 function hasDetails(field) { return field.options.some(o => o.details); }
@@ -154,12 +155,15 @@ function setChoice(loop, field, value) {
     loop[field.key] = value;
     if (!hasDetails(field)) return;
     const opt = field.options.find(o => o.value === value);
-    loop[detailsKey(field)] = opt && opt.details ? loop[detailsKey(field)] || { by: null, text: '' } : null;
+    const old = loop[detailsKey(field)];
+    if (!opt || !opt.details) loop[detailsKey(field)] = null;
+    // Keep the answer when switching between options with the same follow-up (Explicit ↔ Implicit)
+    else if (!old || !(opt.details.key in old)) loop[detailsKey(field)] = { [opt.details.key]: null, ...(opt.details.text ? { text: '' } : {}) };
 }
 
 function detailsSummary(opt, details) {
-    const by = details && opt.details.options.find(o => o.value === details.by);
-    return by ? `${by.label}${details.text ? ': ' + details.text : ''}` : '';
+    const pick = details && opt.details.options.find(o => o.value === details[opt.details.key]);
+    return pick ? `${pick.label}${details.text ? ': ' + details.text : ''}` : '';
 }
 
 function newLoop(start, end = null, segmentIds = []) {
@@ -1530,16 +1534,20 @@ function renderChoice(loop, field) {
     if (chosen && chosen.details) {
         if (!loop[detailsKey(field)]) setChoice(loop, field, chosen.value);
         const details = loop[detailsKey(field)];
+        const key = chosen.details.key;
         const group = `details-${loop.id}-${field.key}`;
         const radios = el('div', { class: 'details-radios' }, ...chosen.details.options.map(o => {
             const radio = el('input', { type: 'radio', name: group, class: 'form-check-input' });
-            radio.checked = details.by === o.value;
-            // Only one applies, so switching clears what was typed for the other
-            radio.addEventListener('change', () => { details.by = o.value; details.text = ''; changed(); });
-            return el('label', { class: `details-radio${details.by === o.value ? ' selected' : ''}` }, radio, el('span', { text: o.label }));
+            radio.checked = details[key] === o.value;
+            radio.addEventListener('change', () => {
+                details[key] = o.value;
+                if (chosen.details.text) details.text = '';   // only one applies, so clear what was typed for the other
+                changed();
+            });
+            return el('label', { class: `details-radio${details[key] === o.value ? ' selected' : ''}` }, radio, el('span', { text: o.label }));
         }));
         const box = el('div', { class: 'choice-details' }, el('div', { class: 'details-label', text: chosen.details.label }), radios);
-        const by = chosen.details.options.find(o => o.value === details.by);
+        const by = chosen.details.text && chosen.details.options.find(o => o.value === details[key]);
         if (by) {
             const input = el('input', { class: 'form-control form-control-sm', value: details.text || '', placeholder: by.placeholder || '(optional)' });
             input.addEventListener('input', () => { details.text = input.value; changed({ structural: false }); });

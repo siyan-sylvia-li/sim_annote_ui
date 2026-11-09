@@ -33,7 +33,9 @@
       "options": [
         { "value": "specified", "label": "Specified Recipient",
           "details": {
+            "key": "by",
             "label": "Specified by (pick one)",
+            "text": true,
             "options": [
               { "value": "name", "label": "Name", "placeholder": "Name used, e.g. Sarah (optional)" },
               { "value": "title", "label": "Title", "placeholder": "Title used, e.g. Med nurse (optional)" },
@@ -60,8 +62,30 @@
       "type": "choice",
       "required": true,
       "options": [
-        { "value": "explicitly_aligned", "label": "Explicitly Aligned Responder", "short": "Explicit" },
-        { "value": "implicitly_aligned", "label": "Implicitly Aligned Responder", "short": "Implicit" },
+        { "value": "explicitly_aligned", "label": "Explicitly Aligned Responder", "short": "Explicit",
+          "details": {
+            "key": "role",
+            "label": "Which responder (pick one)",
+            "options": [
+              { "value": "team_leader", "label": "Team Leader" },
+              { "value": "med_nurse", "label": "Med Nurse" },
+              { "value": "cpr_personnel", "label": "CPR Personnel" },
+              { "value": "airway", "label": "Airway" },
+              { "value": "documenting_nurse", "label": "Documenting Nurse" }
+            ]
+          } },
+        { "value": "implicitly_aligned", "label": "Implicitly Aligned Responder", "short": "Implicit",
+          "details": {
+            "key": "role",
+            "label": "Which responder (pick one)",
+            "options": [
+              { "value": "team_leader", "label": "Team Leader" },
+              { "value": "med_nurse", "label": "Med Nurse" },
+              { "value": "cpr_personnel", "label": "CPR Personnel" },
+              { "value": "airway", "label": "Airway" },
+              { "value": "documenting_nurse", "label": "Documenting Nurse" }
+            ]
+          } },
         { "value": "unaligned", "label": "Unaligned Responder", "short": "Unaligned" },
         { "value": "indeterminate", "label": "Indeterminate Alignment", "short": "Indeterminate" }
       ]

@@ -25,6 +25,20 @@
       ]
     },
     {
+      "key": "content_domain",
+      "label": "Loop Content Domain",
+      "type": "choice",
+      "required": true,
+      "help": "A question is Information Seeking. A task is Task Direction; pick the corresponding task.",
+      "options": [
+        { "value": "information_seeking", "label": "Information Seeking", "short": "Info" },
+        { "value": "med_order", "label": "Med Order", "group": "Task Direction", "short": "Med" },
+        { "value": "cpr", "label": "CPR", "group": "Task Direction" },
+        { "value": "zoll", "label": "Zoll", "group": "Task Direction" },
+        { "value": "other", "label": "Other", "group": "Task Direction" }
+      ]
+    },
+    {
       "key": "recipient_specificity",
       "label": "Recipient Specificity",
       "type": "choice",
@@ -57,6 +71,34 @@
       ]
     },
     {
+      "key": "verbal_check_back",
+      "label": "Verbal Check-back (timestamp)",
+      "type": "timestamps",
+      "help": "For double/multiple loops, add every check-back to the same loop, each with its own timestamp.",
+      "lists": [
+        {
+          "key": "information",
+          "label": "Message Acknowledgement Check-back",
+          "short": "Message ack",
+          "hotkey": "m",
+          "help": "Info seeking: the answer to the question. Task: the recipient acknowledging the request.",
+          "options": [
+            { "value": "repetition", "label": "Repetition", "short": "Rep" },
+            { "value": "paraphrasing", "label": "Paraphrasing", "short": "Par" },
+            { "value": "clarification", "label": "Clarification", "short": "Clf" },
+            { "value": "utterance", "label": "Utterance", "short": "Utt" }
+          ]
+        },
+        {
+          "key": "task_completion",
+          "label": "Terminal Check-back",
+          "short": "Terminal",
+          "hotkey": "t",
+          "help": "Recipient acknowledging they completed the task. Never present for information-seeking call-outs."
+        }
+      ]
+    },
+    {
       "key": "responder_alignment",
       "label": "Responder Alignment",
       "type": "choice",
@@ -86,50 +128,30 @@
               { "value": "documenting_nurse", "label": "Documenting Nurse" }
             ]
           } },
-        { "value": "unaligned", "label": "Unaligned Responder", "short": "Unaligned" },
-        { "value": "indeterminate", "label": "Indeterminate Alignment", "short": "Indeterminate" }
-      ]
-    },
-    {
-      "key": "content_domain",
-      "label": "Loop Content Domain",
-      "type": "choice",
-      "required": true,
-      "help": "A question is Information Seeking. A task is Task Direction; pick the corresponding task.",
-      "options": [
-        { "value": "information_seeking", "label": "Information Seeking", "short": "Info" },
-        { "value": "med_order", "label": "Med Order", "group": "Task Direction", "short": "Med" },
-        { "value": "cpr", "label": "CPR", "group": "Task Direction" },
-        { "value": "zoll", "label": "Zoll", "group": "Task Direction" },
-        { "value": "other", "label": "Other", "group": "Task Direction" }
-      ]
-    },
-    {
-      "key": "verbal_check_back",
-      "label": "Verbal Check-back (timestamp)",
-      "type": "timestamps",
-      "help": "For double/multiple loops, add every check-back to the same loop, each with its own timestamp.",
-      "lists": [
-        {
-          "key": "information",
-          "label": "Message Acknowledgement Check-back",
-          "short": "Message ack",
-          "hotkey": "m",
-          "help": "Info seeking: the answer to the question. Task: the recipient acknowledging the request.",
-          "options": [
-            { "value": "repetition", "label": "Repetition", "short": "Rep" },
-            { "value": "paraphrasing", "label": "Paraphrasing", "short": "Par" },
-            { "value": "clarification", "label": "Clarification", "short": "Clf" },
-            { "value": "utterance", "label": "Utterance", "short": "Utt" }
-          ]
-        },
-        {
-          "key": "task_completion",
-          "label": "Terminal Check-back",
-          "short": "Terminal",
-          "hotkey": "t",
-          "help": "Recipient acknowledging they completed the task. Never present for information-seeking call-outs."
-        }
+        { "value": "unaligned", "label": "Unaligned Responder", "short": "Unaligned",
+          "details": {
+            "key": "role",
+            "label": "Which responder (pick one)",
+            "options": [
+              { "value": "team_leader", "label": "Team Leader" },
+              { "value": "med_nurse", "label": "Med Nurse" },
+              { "value": "cpr_personnel", "label": "CPR Personnel" },
+              { "value": "airway", "label": "Airway" },
+              { "value": "documenting_nurse", "label": "Documenting Nurse" }
+            ]
+          } },
+        { "value": "indeterminate", "label": "Indeterminate Alignment", "short": "Indeterminate",
+          "details": {
+            "key": "role",
+            "label": "Which responder (pick one)",
+            "options": [
+              { "value": "team_leader", "label": "Team Leader" },
+              { "value": "med_nurse", "label": "Med Nurse" },
+              { "value": "cpr_personnel", "label": "CPR Personnel" },
+              { "value": "airway", "label": "Airway" },
+              { "value": "documenting_nurse", "label": "Documenting Nurse" }
+            ]
+          } }
       ]
     },
     {

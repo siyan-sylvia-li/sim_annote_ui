@@ -446,6 +446,7 @@ kbd { font-size: 11px; padding: 1px 4px; }
 .details-radios { display: flex; flex-wrap: wrap; gap: 6px; }
 .details-radio { display: inline-flex; align-items: center; gap: 5px; margin: 0; padding: 3px 10px; border: 1px solid var(--border); border-radius: 14px; background: #fff; font-size: 12px; cursor: pointer; }
 .details-radio .form-check-input { margin: 0; }
+.details-sub { display: grid; gap: 4px; margin-left: 14px; padding-left: 8px; border-left: 2px dotted var(--accent); }
 .details-radio.selected { border-color: var(--accent); background: #e7f0ff; font-weight: 600; }
 
 /* Sub-options of a check-back (Message Acknowledgement → Repetition, Paraphrasing…) */

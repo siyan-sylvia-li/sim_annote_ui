@@ -52,11 +52,29 @@
             "text": true,
             "options": [
               { "value": "name", "label": "Name", "placeholder": "Name used, e.g. Sarah (optional)" },
-              { "value": "title", "label": "Title", "placeholder": "Title used, e.g. Med nurse (optional)" },
+              { "value": "title", "label": "Title", "placeholder": "Title used, e.g. Med nurse (optional)",
+                "sub": { "key": "role", "label": "Which role (pick one)", "options": [
+                  { "value": "team_leader", "label": "Team Leader" },
+                  { "value": "med_nurse", "label": "Med Nurse" },
+                  { "value": "cpr_personnel", "label": "CPR Personnel" },
+                  { "value": "airway", "label": "Airway" },
+                  { "value": "documenting_nurse", "label": "Documenting Nurse" }
+                ] } },
               { "value": "pronoun", "label": "Pronoun", "placeholder": "Pronoun used, e.g. you (optional)" }
             ]
           } },
-        { "value": "implied", "label": "Implied Recipient" },
+        { "value": "implied", "label": "Implied Recipient",
+          "details": {
+            "key": "role",
+            "label": "Which role (pick one)",
+            "options": [
+              { "value": "team_leader", "label": "Team Leader" },
+              { "value": "med_nurse", "label": "Med Nurse" },
+              { "value": "cpr_personnel", "label": "CPR Personnel" },
+              { "value": "airway", "label": "Airway" },
+              { "value": "documenting_nurse", "label": "Documenting Nurse" }
+            ]
+          } },
         { "value": "unspecified", "label": "Unspecified" }
       ]
     },
@@ -189,11 +207,6 @@
     }
   ],
   "rules": [
-    {
-      "message": "Information-seeking call-outs don't have a Terminal Check-back.",
-      "when": [{ "field": "content_domain", "equals": "information_seeking" }],
-      "expect": [{ "field": "verbal_check_back.task_completion", "empty": true }]
-    },
     {
       "message": "Information-seeking call-out was answered (has a Message Acknowledgement Check-back), so Task Completion should be Full.",
       "when": [

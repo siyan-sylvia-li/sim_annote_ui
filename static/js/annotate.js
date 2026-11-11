@@ -145,25 +145,39 @@ function typeButtons(list, current, onPick) {
 
 // A choice option can have an optional pick-one follow-up ("details"), e.g. Specified Recipient →
 // by Name OR Title OR Pronoun (plus what was said, when `text` is on), or Explicitly Aligned
-// Responder → which role. Stored next to the choice as `<field>_details` = {<details.key>: value
-// [, text]}, null when an option without details is picked.
+// Responder → which role. A follow-up option can have its own pick-one ("sub", e.g. Title → which
+// role). Stored next to the choice as `<field>_details` = {<details.key>: value [, <sub.key>] [, text]},
+// null when an option without details is picked.
 function detailsKey(field) { return `${field.key}_details`; }
 
 function hasDetails(field) { return field.options.some(o => o.details); }
 
 function setChoice(loop, field, value) {
+    const before = field.options.find(o => o.value === loop[field.key]);
     loop[field.key] = value;
     if (!hasDetails(field)) return;
     const opt = field.options.find(o => o.value === value);
-    const old = loop[detailsKey(field)];
-    if (!opt || !opt.details) loop[detailsKey(field)] = null;
+    if (!opt || !opt.details) { loop[detailsKey(field)] = null; return; }
     // Keep the answer when switching between options with the same follow-up (Explicit ↔ Implicit)
-    else if (!old || !(opt.details.key in old)) loop[detailsKey(field)] = { [opt.details.key]: null, ...(opt.details.text ? { text: '' } : {}) };
+    const same = before && before.details && JSON.stringify(before.details) === JSON.stringify(opt.details);
+    if (!same || !loop[detailsKey(field)]) loop[detailsKey(field)] = { [opt.details.key]: null, ...(opt.details.text ? { text: '' } : {}) };
 }
 
 function detailsSummary(opt, details) {
     const pick = details && opt.details.options.find(o => o.value === details[opt.details.key]);
-    return pick ? `${pick.label}${details.text ? ': ' + details.text : ''}` : '';
+    if (!pick) return '';
+    const sub = pick.sub && pick.sub.options.find(o => o.value === details[pick.sub.key]);
+    return `${pick.label}${sub ? ' (' + sub.label + ')' : ''}${details.text ? ': ' + details.text : ''}`;
+}
+
+// Round radio buttons in pills: only one can be picked
+function radioPills(name, options, current, onPick) {
+    return el('div', { class: 'details-radios' }, ...options.map(o => {
+        const radio = el('input', { type: 'radio', name, class: 'form-check-input' });
+        radio.checked = current === o.value;
+        radio.addEventListener('change', () => onPick(o.value));
+        return el('label', { class: `details-radio${current === o.value ? ' selected' : ''}` }, radio, el('span', { text: o.label }));
+    }));
 }
 
 function newLoop(start, end = null, segmentIds = []) {
@@ -1536,19 +1550,23 @@ function renderChoice(loop, field) {
         const details = loop[detailsKey(field)];
         const key = chosen.details.key;
         const group = `details-${loop.id}-${field.key}`;
-        const radios = el('div', { class: 'details-radios' }, ...chosen.details.options.map(o => {
-            const radio = el('input', { type: 'radio', name: group, class: 'form-check-input' });
-            radio.checked = details[key] === o.value;
-            radio.addEventListener('change', () => {
-                details[key] = o.value;
-                if (chosen.details.text) details.text = '';   // only one applies, so clear what was typed for the other
-                changed();
-            });
-            return el('label', { class: `details-radio${details[key] === o.value ? ' selected' : ''}` }, radio, el('span', { text: o.label }));
-        }));
+        const radios = radioPills(group, chosen.details.options, details[key], value => {
+            // Only one applies, so clear what was answered for the other
+            for (const k of Object.keys(details)) if (k !== key) details[k] = k === 'text' ? '' : null;
+            for (const o of chosen.details.options) if (o.sub) delete details[o.sub.key];
+            details[key] = value;
+            const pick = chosen.details.options.find(o => o.value === value);
+            if (pick.sub) details[pick.sub.key] = null;
+            changed();
+        });
         const box = el('div', { class: 'choice-details' }, el('div', { class: 'details-label', text: chosen.details.label }), radios);
-        const by = chosen.details.text && chosen.details.options.find(o => o.value === details[key]);
-        if (by) {
+        const by = chosen.details.options.find(o => o.value === details[key]);
+        if (by && by.sub) {
+            box.appendChild(el('div', { class: 'details-sub' },
+                el('div', { class: 'details-label', text: by.sub.label }),
+                radioPills(`${group}-${by.sub.key}`, by.sub.options, details[by.sub.key], value => { details[by.sub.key] = value; changed(); })));
+        }
+        if (by && chosen.details.text) {
             const input = el('input', { class: 'form-control form-control-sm', value: details.text || '', placeholder: by.placeholder || '(optional)' });
             input.addEventListener('input', () => { details.text = input.value; changed({ structural: false }); });
             box.appendChild(input);

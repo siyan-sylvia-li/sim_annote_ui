@@ -22,7 +22,7 @@ from argparse import ArgumentParser
 from pathlib import Path
 from urllib.parse import urlparse
 
-from flask import Flask, abort, jsonify, redirect, render_template, request, send_file, session
+from flask import Flask, abort, jsonify, redirect, render_template, request, send_file, session, url_for
 from werkzeug.exceptions import HTTPException
 
 from annotation_storage import AuthRequired, BoxAPIError, BoxStorage, ChooseZip, LocalStorage, new_oauth_state
@@ -37,6 +37,8 @@ app = Flask(__name__)
 app.json.sort_keys = False
 # Make browsers revalidate JS/CSS so raters always get the latest version after an update
 app.config['SEND_FILE_MAX_AGE_DEFAULT'] = 0
+# Pick up template changes after a `git pull` even if the server wasn't restarted
+app.config['TEMPLATES_AUTO_RELOAD'] = True
 # Only used to sign the OAuth state cookie; a fresh key per run is fine
 app.config['SECRET_KEY'] = secrets.token_hex(32)
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -83,9 +85,21 @@ def load_scheme(scheme_id: str) -> dict:
         return json.load(f)
 
 
+@app.context_processor
+def asset_urls():
+    # Static URLs carry the file's modification time (?v=...), so after an update the browser
+    # sees a new URL and loads the new file instead of a copy it kept from before
+    def asset(filename):
+        path = BASE_DIR / 'static' / filename
+        return url_for('static', filename=filename, v=int(path.stat().st_mtime) if path.exists() else None)
+    return {'asset': asset}
+
+
 @app.route('/')
 def index():
-    return render_template('annotate.html')
+    response = app.make_response(render_template('annotate.html'))
+    response.headers['Cache-Control'] = 'no-cache'   # the page itself, so it always lists the newest ?v= URLs
+    return response
 
 
 # ---------- Box sign-in ----------

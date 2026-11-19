@@ -17,7 +17,8 @@ const state = {
     transcript: null,     // imported transcript: {segments, speakers}
     activeLoopId: null,
     activeRecapId: null,
-    selection: null,      // {start, end, segmentIds} from the timeline or transcript
+    activeRequest: {},    // call-out id -> which Request tab is open
+    selection: null,     // {start, end, segmentIds} from the timeline or transcript
     playUntil: null,      // stop time when playing a selection
     dirty: false,
     saving: false,
@@ -106,6 +107,97 @@ function isTyping(event) {
 
 function fields() { return state.scheme.fields; }
 
+// ---------- Requests ----------
+//
+// A double/multiple loop asks for several things in one call-out. Fields marked `per_request`
+// (content domain, check-backs, responder alignment, loop closure) are answered for each request,
+// in loop.requests[]; the rest (initiator, recipient, task completion, notes) once per call-out.
+// How many requests follows Loop Opened (scheme.requests.counts); Multiple can add more.
+
+function loopFields() { return fields().filter(f => !f.per_request); }
+function requestFields() { return fields().filter(f => f.per_request); }
+function requestsConfig() { return state.scheme.requests || { label: 'Request', counts: {}, can_add: [] }; }
+function requestName(i) { return `${requestsConfig().label} ${i + 1}`; }
+
+// "#3" for a one-request call-out, "#3.2" for its second request
+function loopTag(loop, request) {
+    return `#${loop.callout.number}${request !== null && loop.requests.length > 1 ? '.' + (request + 1) : ''}`;
+}
+
+function minRequests(loop) {
+    const cfg = requestsConfig();
+    return cfg.counts[loop[cfg.count_field]] || 1;
+}
+
+function canAddRequests(loop) {
+    const cfg = requestsConfig();
+    return (cfg.can_add || []).includes(loop[cfg.count_field]);
+}
+
+function requestHasData(req) {
+    return requestFields().some(f => {
+        if (f.type === 'timestamps') return timestampLists().some(t => t.field === f && getList(req, t.path).length);
+        if (f.type === 'notes') return req[f.key].tags.length || req[f.key].text;
+        return !isEmpty(req[f.key]);
+    });
+}
+
+function newRequest() { return blankFields({ id: uid() }, requestFields()); }
+
+// Make the tabs match Loop Opened (Single 1, Double 2, Multiple at least 3, keeping any added).
+// Asks before dropping tabs that have answers; returns false if the rater says no.
+function fitRequests(loop) {
+    const keep = canAddRequests(loop) ? Math.max(minRequests(loop), loop.requests.length) : minRequests(loop);
+    const dropped = loop.requests.slice(keep);
+    if (dropped.some(requestHasData) && !confirm(
+        `This removes ${keep + 1 === loop.requests.length ? requestName(keep) : `${requestName(keep)}–${loop.requests.length}`} and what's filled in there. Continue?`)) return false;
+    loop.requests.splice(keep);
+    while (loop.requests.length < keep) loop.requests.push(newRequest());
+    return true;
+}
+
+function addRequest(loop) {
+    loop.requests.push(newRequest());
+    state.activeRequest[loop.id] = loop.requests.length - 1;
+    changed();
+}
+
+function removeRequest(loop, i) {
+    if (requestHasData(loop.requests[i]) && !confirm(`Remove ${requestName(i)} and what's filled in there?`)) return;
+    loop.requests.splice(i, 1);
+    state.activeRequest[loop.id] = Math.min(activeRequestIndex(loop), loop.requests.length - 1);
+    changed();
+}
+
+function activeRequestIndex(loop) {
+    return Math.max(0, Math.min(state.activeRequest[loop.id] || 0, loop.requests.length - 1));
+}
+
+// Every check-back / closure of a call-out, across its requests: [{field, list, path, entry, request}]
+function loopEntries(loop) {
+    const out = [];
+    for (const t of timestampLists()) {
+        const holders = t.field.per_request ? loop.requests : [loop];
+        holders.forEach((holder, i) => {
+            for (const entry of getList(holder, t.path)) out.push({ ...t, entry, request: t.field.per_request ? i : null });
+        });
+    }
+    return out;
+}
+
+// Picking a choice; changing Loop Opened also adds/removes request tabs (and can be cancelled)
+function pickChoice(loop, target, field, value) {
+    const before = target[field.key];
+    const beforeDetails = target[detailsKey(field)];
+    setChoice(target, field, value);
+    if (target === loop && field.key === requestsConfig().count_field && !fitRequests(loop)) {
+        target[field.key] = before;
+        if (hasDetails(field)) target[detailsKey(field)] = beforeDetails;
+        return false;
+    }
+    return true;
+}
+
 function timestampLists() {
     // Flat list of {field, list, path} for every timestamp column, e.g. path "verbal_check_back.information"
     const lists = [];
@@ -180,22 +272,54 @@ function radioPills(name, options, current, onPick) {
     }));
 }
 
+// Empty answers for `list` of fields; only the missing ones when `onlyMissing` (files saved
+// before a field was added to the scheme)
+function blankFields(target, list, onlyMissing = false) {
+    for (const field of list) {
+        const has = onlyMissing && (field.type === 'choice' ? target[field.key] !== undefined : target[field.key] != null);
+        if (field.type === 'choice') {
+            if (!has) target[field.key] = null;
+            if (hasDetails(field) && !(onlyMissing && target[detailsKey(field)] !== undefined)) target[detailsKey(field)] = null;
+        } else if (field.type === 'timestamps') {
+            if (field.lists.length === 1) { if (!has) target[field.key] = []; }
+            else {
+                if (!has) target[field.key] = {};
+                for (const l of field.lists) if (!Array.isArray(target[field.key][l.key])) target[field.key][l.key] = [];
+            }
+        } else if (field.type === 'notes' && !has) target[field.key] = { tags: [], text: '' };
+    }
+    return target;
+}
+
 function newLoop(start, end = null, segmentIds = []) {
     const loop = {
         id: uid(),
         callout: { number: null, start: roundTime(start), end: end === null ? null : roundTime(end), summary: '', segment_ids: segmentIds },
     };
-    for (const field of fields()) {
-        if (field.type === 'choice') {
-            loop[field.key] = null;
-            if (hasDetails(field)) loop[detailsKey(field)] = null;
-        }
-        else if (field.type === 'timestamps') {
-            if (field.lists.length === 1) loop[field.key] = [];
-            else loop[field.key] = Object.fromEntries(field.lists.map(l => [l.key, []]));
-        } else if (field.type === 'notes') loop[field.key] = { tags: [], text: '' };
-    }
+    blankFields(loop, loopFields());
+    loop.requests = [newRequest()];
     return loop;
+}
+
+// Files saved before request tabs kept check-backs etc. on the call-out itself: those become
+// request 1 (and Double/Multiple get their other, empty, tabs)
+function normalizeLoop(loop) {
+    if (!Array.isArray(loop.requests)) {
+        const req = { id: uid() };
+        for (const f of requestFields()) {
+            for (const key of [f.key, detailsKey(f)]) {
+                if (key in loop) { req[key] = loop[key]; delete loop[key]; }
+            }
+        }
+        loop.requests = [req];
+    }
+    blankFields(loop, loopFields(), true);
+    for (const req of loop.requests) {
+        if (!req.id) req.id = uid();
+        delete req.number;   // the tab order is the number
+        blankFields(req, requestFields(), true);
+    }
+    while (loop.requests.length < minRequests(loop)) loop.requests.push(newRequest());
 }
 
 function isEmpty(value) {
@@ -214,14 +338,35 @@ function checkCondition(loop, cond, isExpectation) {
     return true;
 }
 
+function ruleFieldKeys(conds) {
+    return conds.flatMap(c => (c.any ? ruleFieldKeys(c.any) : [c.field.split('.')[0]]));
+}
+
+// Rules that mention a per-request field are checked for each request (with the call-out's own
+// answers alongside), and say which request they're about
 function loopWarnings(loop) {
-    return (state.scheme.rules || [])
-        .filter(rule => rule.when.every(c => checkCondition(loop, c, false)) && !rule.expect.every(c => checkCondition(loop, c, true)))
-        .map(rule => rule.message);
+    const perRequest = new Set(requestFields().map(f => f.key));
+    const warnings = [];
+    for (const rule of state.scheme.rules || []) {
+        const byRequest = ruleFieldKeys([...rule.when, ...rule.expect]).some(k => perRequest.has(k));
+        const contexts = byRequest ? loop.requests.map((req, i) => [{ ...loop, ...req }, i]) : [[loop, null]];
+        for (const [ctx, i] of contexts) {
+            if (rule.when.every(c => checkCondition(ctx, c, false)) && !rule.expect.every(c => checkCondition(ctx, c, true))) {
+                warnings.push(i !== null && loop.requests.length > 1 ? `${requestName(i)}: ${rule.message}` : rule.message);
+            }
+        }
+    }
+    return warnings;
 }
 
 function missingFields(loop) {
-    return fields().filter(f => f.required && isEmpty(loop[f.key])).map(f => f.label);
+    const missing = loopFields().filter(f => f.required && isEmpty(loop[f.key])).map(f => f.label);
+    loop.requests.forEach((req, i) => {
+        for (const f of requestFields()) {
+            if (f.required && isEmpty(req[f.key])) missing.push(loop.requests.length > 1 ? `${f.label} (${requestName(i)})` : f.label);
+        }
+    });
+    return missing;
 }
 
 // ---------- Loops ----------
@@ -325,30 +470,35 @@ function deleteRecap(recap) {
     changed();
 }
 
-function addTimestamp(path, time, segmentIds = [], loop = activeLoop(), note = '', type = null) {
+function addTimestamp(path, time, segmentIds = [], loop = activeLoop(), note = '', type = null, request = 0) {
     if (!loop) {
         toast('Open a call-out first (press N or click one on the timeline)', 'warning');
         return;
     }
-    const list = getList(loop, path);
-    const { list: def } = timestampLists().find(t => t.path === path);
+    const { field, list: def } = timestampLists().find(t => t.path === path);
+    const list = getList(field.per_request ? loop.requests[request] : loop, path);
     list.push(def.options ? { time: roundTime(time), type, note, segment_ids: segmentIds } : { time: roundTime(time), note, segment_ids: segmentIds });
     list.sort((a, b) => a.time - b.time);
+    if (field.per_request) state.activeRequest[loop.id] = request;
     changed();
-    toast(`${def.label} at ${formatTime(time)} → call-out #${loop.callout.number}`, 'success');
+    const where = field.per_request && loop.requests.length > 1 ? `, ${requestName(request).toLowerCase()}` : '';
+    toast(`${def.label} at ${formatTime(time)} → call-out #${loop.callout.number}${where}`, 'success');
 }
 
 // ---------- "Which call-out?" picker for check backs and closures ----------
 //
 // A check back often belongs to an earlier call-out than the one being edited, so M / T / C (and
-// the selection bar's buttons) ask which call-out to attach it to instead of assuming the open one.
-// The moment is taken when the key is pressed, so playback can keep running while choosing.
+// the selection bar's buttons) ask which call-out to attach it to instead of assuming the open one,
+// then (for a double/multiple loop) which of its requests.
+// The moment is taken when the key is pressed, and playback pauses while choosing and typing the note.
 
 function summarizeLoop(loop) {
+    const entries = loopEntries(loop);
     const parts = timestampLists().map(({ path, list }) => {
-        const n = getList(loop, path).length;
+        const n = entries.filter(e => e.path === path).length;
         return n ? `${n} ${shortLabel(list)}` : null;
     }).filter(Boolean);
+    if (loop.requests.length > 1) parts.unshift(`${loop.requests.length} requests`);
     return parts.length ? parts.join(' · ') : 'nothing added yet';
 }
 
@@ -364,6 +514,7 @@ function chooseLoopThenAdd(path, time, segmentIds = []) {
         toast(`No call-out before ${formatTime(time)} yet: press N to make one`, 'warning');
         return;
     }
+    if (state.player && state.player.isPlaying()) state.player.pause();
     openLoopPicker(path, time, segmentIds, candidates);
 }
 
@@ -395,12 +546,23 @@ function showNoteStep(path, time, segmentIds, loop, label, kind, candidates) {
     const panel = $('loopPicker');
     panel.innerHTML = '';
     const note = el('input', { class: 'form-control', placeholder: 'note (optional), e.g. "ok", "epi given"' });
-    const { list } = timestampLists().find(t => t.path === path);
+    const { field, list } = timestampLists().find(t => t.path === path);
     let type = null;
     const types = list.options ? el('div') : null;
     const renderTypes = () => { types.replaceChildren(typeButtons(list, type, value => { type = value; renderTypes(); note.focus(); })); };
     if (types) renderTypes();
-    const add = () => { closeLoopPicker(); addTimestamp(path, time, segmentIds, loop, note.value.trim(), type); };
+    // Double/multiple loops: which request it belongs to (starts on the tab that's open)
+    let request = activeRequestIndex(loop);
+    const requests = field.per_request && loop.requests.length > 1 ? el('div', { class: 'picker-requests' }) : null;
+    const renderRequests = () => {
+        requests.replaceChildren(el('span', { class: 'picker-requests-label', text: `${requestsConfig().label}:` }),
+            ...loop.requests.map((_, i) => el('button', {
+                class: `choice-btn${i === request ? ' selected' : ''}`,
+                onclick: () => { request = i; renderRequests(); note.focus(); },
+            }, String(i + 1))));
+    };
+    if (requests) renderRequests();
+    const add = () => { closeLoopPicker(); addTimestamp(path, time, segmentIds, loop, note.value.trim(), type, field.per_request ? request : 0); };
     note.addEventListener('keydown', e => {
         if (e.key === 'Enter') { e.preventDefault(); add(); }
         else if (e.key === 'Escape') { e.preventDefault(); closeLoopPicker(); }
@@ -409,13 +571,14 @@ function showNoteStep(path, time, segmentIds, loop, label, kind, candidates) {
         el('div', { class: 'picker-title' }, el('i', { class: `lg lg-${kind}` }),
             ` ${label} at ${formatTime(time, true)} → call-out #${loop.callout.number}`,
             loop.callout.summary ? el('span', { class: 'picker-summary-inline', text: ` (${loop.callout.summary})` }) : null),
+        requests,
         types,
         note,
         el('div', { class: 'picker-actions' },
             candidates ? el('button', { class: 'btn btn-sm btn-link', onclick: () => openLoopPicker(path, time, segmentIds, candidates) },
                 el('i', { class: 'fas fa-arrow-left' }), ' Other call-out') : el('span'),
             el('button', { class: 'btn btn-sm btn-primary', onclick: add }, 'Add')),
-        el('div', { class: 'picker-hint' }, `Enter to add (${types ? 'the type and note are' : 'the note is'} optional) · Esc to cancel`));
+        el('div', { class: 'picker-hint' }, `Enter to add (${types ? 'the type and note are' : 'the note is'} optional)${requests ? ' · click the request it belongs to' : ''} · Esc to cancel`));
     state.picker = { step: 'note', add };
     note.focus();
 }
@@ -493,7 +656,8 @@ function markSegments() {
     return state.selection ? state.selection.segmentIds.slice() : [];
 }
 
-function stepLoop(direction) {
+// `seek`: also move playback there ([ / ] keys); the editor's arrows only switch what's shown
+function stepLoop(direction, { seek = true } = {}) {
     const loops = sortedLoops();
     if (!loops.length) return;
     const idx = loops.findIndex(l => l.id === state.activeLoopId);
@@ -505,10 +669,32 @@ function stepLoop(direction) {
     } else {
         next = loops[Math.max(0, Math.min(loops.length - 1, idx + direction))];
     }
-    setActive(next.id, { seek: true });
+    setActive(next.id, { seek });
 }
 
 // ---------- Persistence ----------
+
+function exportFields(holder, list) {
+    return list.flatMap(f => (f.type === 'choice' && hasDetails(f)
+        ? [[f.key, holder[f.key]], [detailsKey(f), holder[detailsKey(f)] || null]]
+        : [[f.key, holder[f.key]]]));
+}
+
+// The call-out's own answers in scheme order, with `requests` (one object per request, holding
+// the per-request answers) where the per-request fields sit in the scheme
+function exportLoopFields(loop) {
+    const out = [];
+    let requestsDone = false;
+    for (const f of fields()) {
+        if (!f.per_request) { out.push(...exportFields(loop, [f])); continue; }
+        if (requestsDone) continue;
+        requestsDone = true;
+        out.push(['requests', loop.requests.map((req, i) => ({
+            id: req.id, number: i + 1, ...Object.fromEntries(exportFields(req, requestFields())),
+        }))]);
+    }
+    return Object.fromEntries(out);
+}
 
 // Keys are written in spreadsheet column order so the JSON reads like the old sheet
 function exportDoc() {
@@ -526,9 +712,7 @@ function exportDoc() {
                 number: loop.callout.number, start: loop.callout.start, end: loop.callout.end,
                 summary: loop.callout.summary, segment_ids: loop.callout.segment_ids || [],
             },
-            ...Object.fromEntries(fields().flatMap(f => (f.type === 'choice' && hasDetails(f)
-                ? [[f.key, loop[f.key]], [detailsKey(f), loop[detailsKey(f)] || null]]
-                : [[f.key, loop[f.key]]]))),
+            ...exportLoopFields(loop),
         })),
         recaps: (renumberRecaps(), sortedRecaps()).map(r => ({
             id: r.id, number: r.number, time: r.time, title: r.title, message: r.message, segment_ids: r.segment_ids || [],
@@ -730,6 +914,8 @@ async function loadSession() {
         try { localStorage.removeItem(backupKey(sessionId, rater)); } catch (e) { /* storage unavailable */ }
     }
     if (!Array.isArray(state.doc.recaps)) state.doc.recaps = [];   // files saved before recaps existed
+    state.doc.loops.forEach(normalizeLoop);
+    state.activeRequest = {};
 
     $('emptyState').classList.add('d-none');
     $('workspace').classList.remove('d-none');
@@ -1030,22 +1216,25 @@ function renderTimeline() {
             onclick: e => { e.stopPropagation(); setActive(loop.id, { seek: true }); },
         }, String(loop.callout.number)));
 
-        for (const { path, list } of timestampLists()) {
-            for (const entry of getList(loop, path)) {
-                const kind = path.split('.').pop();
-                markerLane.appendChild(el('div', {
-                    class: `marker mk-${kind}${active ? ' active' : ''}`,
-                    style: `left:${pct(entry.time)}%`,
-                    title: `#${loop.callout.number} ${list.label}${typeLabel(list, entry) ? ' (' + typeLabel(list, entry) + ')' : ''} ${formatTime(entry.time)}${entry.note ? ' – ' + entry.note : ''}`,
-                    onmousedown: e => e.stopPropagation(),
-                    onclick: e => { e.stopPropagation(); setActive(loop.id); state.player.seek(entry.time); },
-                }));
-                if (active) {
-                    // Connector from the call-out to each of its check backs / closures
-                    const from = Math.min(start, entry.time);
-                    const to = Math.max(start, entry.time);
-                    markerLane.appendChild(el('div', { class: 'connector', style: `left:${pct(from)}%;width:${pct(to - from)}%` }));
-                }
+        for (const { path, list, entry, request } of loopEntries(loop)) {
+            const kind = path.split('.').pop();
+            markerLane.appendChild(el('div', {
+                class: `marker mk-${kind}${active ? ' active' : ''}`,
+                style: `left:${pct(entry.time)}%`,
+                title: `${loopTag(loop, request)} ${list.label}${typeLabel(list, entry) ? ' (' + typeLabel(list, entry) + ')' : ''} ${formatTime(entry.time)}${entry.note ? ' – ' + entry.note : ''}`,
+                onmousedown: e => e.stopPropagation(),
+                onclick: e => {
+                    e.stopPropagation();
+                    if (request !== null) state.activeRequest[loop.id] = request;
+                    setActive(loop.id);
+                    state.player.seek(entry.time);
+                },
+            }));
+            if (active) {
+                // Connector from the call-out to each of its check backs / closures
+                const from = Math.min(start, entry.time);
+                const to = Math.max(start, entry.time);
+                markerLane.appendChild(el('div', { class: 'connector', style: `left:${pct(from)}%;width:${pct(to - from)}%` }));
             }
         }
     }
@@ -1201,11 +1390,8 @@ function segmentBadges() {
     for (const loop of state.doc.loops) {
         const n = loop.callout.number;
         add(loop.callout.segment_ids, loop.callout.start, { loop, kind: 'callout', text: `#${n} call-out` });
-        for (const { path, list } of timestampLists()) {
-            const kind = path.split('.').pop();
-            for (const entry of getList(loop, path)) {
-                add(entry.segment_ids, entry.time, { loop, kind, text: `#${n} ${shortLabel(list)}` });
-            }
+        for (const { path, list, entry, request } of loopEntries(loop)) {
+            add(entry.segment_ids, entry.time, { loop, kind: path.split('.').pop(), text: `${loopTag(loop, request)} ${shortLabel(list)}` });
         }
     }
     for (const recap of state.doc.recaps) {
@@ -1524,7 +1710,8 @@ function setupTooltips() {
     document.addEventListener('scroll', hide, true);
 }
 
-function renderChoice(loop, field) {
+// `target` is the call-out, or one of its requests for per-request fields
+function renderChoice(loop, target, field) {
     const wrap = el('div', { class: 'choice-wrap' });
     let currentGroup = null;
     let groupNode = wrap;
@@ -1538,18 +1725,18 @@ function renderChoice(loop, field) {
                 groupNode = wrap;
             }
         }
-        const selected = loop[field.key] === opt.value;
+        const selected = target[field.key] === opt.value;
         groupNode.appendChild(el('button', {
             class: `choice-btn${selected ? ' selected' : ''}`,
-            onclick: () => { setChoice(loop, field, selected ? null : opt.value); changed(); },
+            onclick: () => { if (pickChoice(loop, target, field, selected ? null : opt.value)) changed(); },
         }, opt.label));
     }
-    const chosen = field.options.find(o => o.value === loop[field.key]);
+    const chosen = field.options.find(o => o.value === target[field.key]);
     if (chosen && chosen.details) {
-        if (!loop[detailsKey(field)]) setChoice(loop, field, chosen.value);
-        const details = loop[detailsKey(field)];
+        if (!target[detailsKey(field)]) setChoice(target, field, chosen.value);
+        const details = target[detailsKey(field)];
         const key = chosen.details.key;
-        const group = `details-${loop.id}-${field.key}`;
+        const group = `details-${target.id}-${field.key}`;
         const radios = radioPills(group, chosen.details.options, details[key], value => {
             // Only one applies, so clear what was answered for the other
             for (const k of Object.keys(details)) if (k !== key) details[k] = k === 'text' ? '' : null;
@@ -1576,12 +1763,12 @@ function renderChoice(loop, field) {
     return wrap;
 }
 
-function renderTimestamps(loop, field) {
+function renderTimestamps(target, field) {
     const wrap = el('div', { class: 'ts-wrap' });
     for (const list of field.lists) {
         const path = field.lists.length === 1 ? field.key : `${field.key}.${list.key}`;
         const kind = path.split('.').pop();
-        const entries = getList(loop, path);
+        const entries = getList(target, path);
         const block = el('div', { class: 'ts-list' });
         if (field.lists.length > 1) block.appendChild(el('div', { class: 'ts-list-label' }, el('i', { class: `lg lg-${kind}` }), ` ${list.label} `, helpIcon(list.help)));
         entries.forEach((entry, idx) => {
@@ -1607,15 +1794,15 @@ function renderTimestamps(loop, field) {
     return wrap;
 }
 
-function renderNotes(loop, field) {
+function renderNotes(target, field) {
     const wrap = el('div', { class: 'notes-wrap' });
     const tags = el('div', { class: 'choice-wrap' });
     for (const tag of field.tags) {
-        const on = loop[field.key].tags.includes(tag.value);
+        const on = target[field.key].tags.includes(tag.value);
         tags.appendChild(el('button', {
             class: `choice-btn tag${on ? ' selected' : ''}`,
             onclick: () => {
-                const list = loop[field.key].tags;
+                const list = target[field.key].tags;
                 if (on) list.splice(list.indexOf(tag.value), 1); else list.push(tag.value);
                 changed();
             },
@@ -1623,9 +1810,57 @@ function renderNotes(loop, field) {
     }
     wrap.appendChild(tags);
     const text = el('textarea', { class: 'form-control form-control-sm', rows: '2', placeholder: 'Free-text notes' });
-    text.value = loop[field.key].text;
-    text.addEventListener('input', () => { loop[field.key].text = text.value; changed({ structural: false }); });
+    text.value = target[field.key].text;
+    text.addEventListener('input', () => { target[field.key].text = text.value; changed({ structural: false }); });
     wrap.appendChild(text);
+    return wrap;
+}
+
+function renderField(loop, target, field) {
+    const missing = field.required && isEmpty(target[field.key]);
+    let body;
+    if (field.type === 'choice') body = renderChoice(loop, target, field);
+    else if (field.type === 'timestamps') body = renderTimestamps(target, field);
+    else if (field.type === 'notes') body = renderNotes(target, field);
+    return el('div', { class: `field${missing ? ' missing' : ''}` },
+        el('div', { class: 'field-label' }, field.label, ' ', helpIcon(field.help)),
+        body);
+}
+
+// One tab per request (Double: 2, Multiple: 3 plus any added with +). A single request has no tabs.
+function renderRequests(loop) {
+    const cfg = requestsConfig();
+    const reqs = loop.requests;
+    const idx = activeRequestIndex(loop);
+    const tabbed = reqs.length > 1 || canAddRequests(loop);
+    const wrap = el('div', { class: `requests${tabbed ? ' tabbed' : ''}` });
+    if (tabbed) {
+        const tabs = el('div', { class: 'request-tabs' });
+        const fixed = minRequests(loop);
+        reqs.forEach((req, i) => {
+            const incomplete = requestFields().some(f => f.required && isEmpty(req[f.key]));
+            tabs.appendChild(el('div', {
+                class: `request-tab${i === idx ? ' active' : ''}${incomplete ? ' incomplete' : ''}`,
+                role: 'button', tabindex: '0',
+                title: incomplete ? `${requestName(i)}: not everything is filled in yet` : requestName(i),
+                onclick: () => { state.activeRequest[loop.id] = i; renderLoopEditor(); },
+            }, requestName(i),
+            i >= fixed ? el('button', {
+                class: 'tab-remove', title: `Remove ${requestName(i)}`,
+                onclick: e => { e.stopPropagation(); removeRequest(loop, i); },
+            }, el('i', { class: 'fas fa-times' })) : null));
+        });
+        if (canAddRequests(loop)) {
+            tabs.appendChild(el('button', { class: 'request-tab add', title: `Add a ${cfg.label.toLowerCase()}`, onclick: () => addRequest(loop) },
+                el('i', { class: 'fas fa-plus' })));
+        }
+        const tip = helpIcon(cfg.help);
+        if (tip) tabs.appendChild(tip);
+        wrap.appendChild(tabs);
+    }
+    const body = el('div', { class: 'request-body' });
+    for (const field of requestFields()) body.appendChild(renderField(loop, reqs[idx], field));
+    wrap.appendChild(body);
     return wrap;
 }
 
@@ -1669,8 +1904,8 @@ function renderLoopEditor() {
     editor.appendChild(el('div', { class: 'editor-header' },
         el('h5', { class: 'mb-0' }, `Call-out #${c.number}`),
         el('div', {},
-            el('button', { class: 'btn btn-sm btn-light', title: 'Previous call-out ([)', onclick: () => stepLoop(-1) }, el('i', { class: 'fas fa-chevron-left' })),
-            el('button', { class: 'btn btn-sm btn-light', title: 'Next call-out (])', onclick: () => stepLoop(1) }, el('i', { class: 'fas fa-chevron-right' })),
+            el('button', { class: 'btn btn-sm btn-light', title: 'Previous call-out (keeps the current playback time)', onclick: () => stepLoop(-1, { seek: false }) }, el('i', { class: 'fas fa-chevron-left' })),
+            el('button', { class: 'btn btn-sm btn-light', title: 'Next call-out (keeps the current playback time)', onclick: () => stepLoop(1, { seek: false }) }, el('i', { class: 'fas fa-chevron-right' })),
             el('button', { class: 'btn btn-sm btn-light', title: 'Close editor', onclick: () => setActive(null) }, el('i', { class: 'fas fa-times' })),
             el('button', { class: 'btn btn-sm btn-outline-danger ms-2', title: 'Delete call-out', onclick: () => deleteLoop(loop) }, el('i', { class: 'fas fa-trash' })))));
 
@@ -1689,15 +1924,14 @@ function renderLoopEditor() {
             el('button', { class: 'btn btn-sm btn-dark', title: 'Play from call-out', onclick: () => { state.player.seek(c.start); state.player.play(); } }, el('i', { class: 'fas fa-play' }))),
         summary));
 
+    // Per-request fields are shown together, in request tabs, where the first of them sits in the scheme
+    let requestsShown = false;
     for (const field of fields()) {
-        const missing = field.required && isEmpty(loop[field.key]);
-        let body;
-        if (field.type === 'choice') body = renderChoice(loop, field);
-        else if (field.type === 'timestamps') body = renderTimestamps(loop, field);
-        else if (field.type === 'notes') body = renderNotes(loop, field);
-        editor.appendChild(el('div', { class: `field${missing ? ' missing' : ''}` },
-            el('div', { class: 'field-label' }, field.label, ' ', helpIcon(field.help)),
-            body));
+        if (!field.per_request) editor.appendChild(renderField(loop, loop, field));
+        else if (!requestsShown) {
+            editor.appendChild(renderRequests(loop));
+            requestsShown = true;
+        }
     }
 
     const warnings = loopWarnings(loop);
@@ -1780,18 +2014,27 @@ function renderTable() {
             loop.callout.summary ? el('div', { class: 'cell-sub', text: loop.callout.summary }) : null));
 
         for (const col of cols) {
+            // Per-request columns show every request's answer, numbered when there are several
+            const targets = col.field.per_request ? loop.requests : [loop];
+            const multi = targets.length > 1;
             if (col.kind === 'choice') {
-                const on = loop[col.field.key] === col.opt.value;
-                const details = on && col.opt.details ? detailsSummary(col.opt, loop[detailsKey(col.field)]) : '';
+                const onAt = targets.map((t, i) => (t[col.field.key] === col.opt.value ? i : -1)).filter(i => i >= 0);
+                const on = onAt.length > 0;
+                const subs = onAt.map(i => {
+                    const details = col.opt.details ? detailsSummary(col.opt, targets[i][detailsKey(col.field)]) : '';
+                    return multi ? `${i + 1}${details ? ': ' + details : ''}` : details;
+                }).filter(Boolean);
                 row.appendChild(el('td', {
-                    class: `cell-y${on ? ' on' : ''}${isEmpty(loop[col.field.key]) ? ' empty-field' : ''}`,
-                    title: `${col.field.label}: ${col.label}`,
-                    onclick: () => { setChoice(loop, col.field, on ? null : col.opt.value); state.activeLoopId = loop.id; state.activeRecapId = null; changed(); },
-                }, on ? 'Y' : '', details ? el('div', { class: 'cell-sub', text: details }) : null));
+                    class: `cell-y${on ? ' on' : ''}${targets.some(t => isEmpty(t[col.field.key])) ? ' empty-field' : ''}`,
+                    // View only: clicking opens the call-out in the editor
+                    title: `${col.field.label}: ${col.label}${multi && on ? ` (${onAt.map(requestName).join(', ')})` : ''}`,
+                    onclick: () => setActive(loop.id),
+                }, on ? 'Y' : '', subs.length ? el('div', { class: 'cell-sub', text: subs.join(' · ') }) : null));
             } else if (col.kind === 'timestamps') {
-                const entries = getList(loop, col.path);
+                const lines = targets.flatMap((t, i) => getList(t, col.path).map(e =>
+                    `${multi ? (i + 1) + ': ' : ''}y (${typeLabel(col.list, e) ? typeLabel(col.list, e) + ': ' : ''}${e.note ? e.note + ' ' : ''}${formatTime(e.time)})`));
                 row.appendChild(el('td', { class: 'cell-ts', onclick: () => setActive(loop.id) },
-                    ...entries.map(e => el('div', { text: `y (${typeLabel(col.list, e) ? typeLabel(col.list, e) + ': ' : ''}${e.note ? e.note + ' ' : ''}${formatTime(e.time)})` }))));
+                    ...lines.map(text => el('div', { text }))));
             } else if (col.kind === 'notes') {
                 const notes = loop[col.field.key];
                 const tagLabels = notes.tags.map(v => (col.field.tags.find(t => t.value === v) || { label: v }).label);

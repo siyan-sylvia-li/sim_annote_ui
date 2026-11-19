@@ -151,6 +151,8 @@ class BoxPreviewPlayer {
             container: this.container,
             header: 'none',
             showDownload: false,
+            // Box's own shortcuts (M mutes, C captions, arrows seek...) would fire alongside the tool's
+            useHotkeys: false,
             fileOptions: { [fileId]: { startAt: { unit: 'seconds', value: Math.floor(startAt) } } },
         });
         return loaded;

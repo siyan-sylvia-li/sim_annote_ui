@@ -453,3 +453,21 @@ kbd { font-size: 11px; padding: 1px 4px; }
 .ts-options { margin: -2px 0 6px 18px; }
 .ts-options .choice-btn { font-size: 11px; padding: 1px 7px; }
 .loop-picker > .choice-wrap { margin-bottom: 6px; }
+
+/* Requests of a double/multiple loop: one tab each */
+.requests.tabbed { margin: 8px 0; border: 1px solid var(--border); border-radius: 8px; background: #fbfcfe; }
+.request-tabs { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; padding: 6px 8px 0; border-bottom: 1px solid var(--border); }
+.request-tab {
+    display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; margin-bottom: -1px;
+    border: 1px solid transparent; border-radius: 6px 6px 0 0; background: none; font-size: 13px; color: var(--muted); cursor: pointer;
+}
+.request-tab:hover { color: #212529; background: #eef4ff; }
+.request-tab.active { color: #212529; font-weight: 600; background: #fff; border-color: var(--border); border-bottom-color: #fff; }
+.request-tab.incomplete::after { content: '•'; color: var(--missing); }
+.request-tab.add { color: var(--accent); }
+.tab-remove { border: 0; background: none; padding: 0 2px; font-size: 11px; color: var(--muted); line-height: 1; }
+.tab-remove:hover { color: var(--missing); }
+.requests.tabbed .request-body { padding: 0 10px; background: #fff; border-radius: 0 0 8px 8px; }
+.requests.tabbed .request-body > .field:first-child { border-top: 0; }
+.picker-requests { display: flex; align-items: center; gap: 6px; margin: 0 4px 6px; }
+.picker-requests-label { font-size: 13px; color: var(--muted); }

@@ -1,6 +1,6 @@
 {
   "id": "clc",
-  "version": "1",
+  "version": "2",
   "title": "Closed Loop Communication",
   "speakers": ["Team Leader", "Med Nurse", "CPR Personnel", "Airway", "Documenting Nurse"],
   "role_aliases": {
@@ -11,35 +11,24 @@
     "CPR": "CPR Personnel",
     "CPR2": "CPR Personnel 2"
   },
+  "requests": {
+    "label": "Request",
+    "count_field": "loop_opened",
+    "counts": { "single": 1, "double": 2, "multiple": 3 },
+    "can_add": ["multiple"],
+    "help": "Each task/question in the call-out gets its own tab: content domain, check-backs, responder alignment and loop closure are answered per request."
+  },
   "fields": [
-    {
-      "key": "loop_opened",
-      "label": "Loop Opened",
+    {      "key": "initiator",
+      "label": "Initiator",
       "type": "choice",
       "required": true,
-      "help": "Single = one task/question to one person. Double = two to one person. Multiple = more than two to one person. Two tasks to two different people are two separate call-outs.",
       "options": [
-        { "value": "single", "label": "Single Loop", "short": "Single" },
-        { "value": "double", "label": "Double Loop", "short": "Double" },
-        { "value": "multiple", "label": "Multiple Loop", "short": "Multiple" }
+        { "value": "team_leader", "label": "Team Leader" },
+        { "value": "other", "label": "Other" }
       ]
     },
-    {
-      "key": "content_domain",
-      "label": "Loop Content Domain",
-      "type": "choice",
-      "required": true,
-      "help": "A question is Information Seeking. A task is Task Direction; pick the corresponding task.",
-      "options": [
-        { "value": "information_seeking", "label": "Information Seeking", "short": "Info" },
-        { "value": "med_order", "label": "Med Order", "group": "Task Direction", "short": "Med" },
-        { "value": "cpr", "label": "CPR", "group": "Task Direction" },
-        { "value": "zoll", "label": "Zoll", "group": "Task Direction" },
-        { "value": "other", "label": "Other", "group": "Task Direction" }
-      ]
-    },
-    {
-      "key": "recipient_specificity",
+    {      "key": "recipient_specificity",
       "label": "Recipient Specificity",
       "type": "choice",
       "required": true,
@@ -79,20 +68,36 @@
       ]
     },
     {
-      "key": "initiator",
-      "label": "Initiator",
+      "key": "loop_opened",
+      "label": "Loop Opened",
       "type": "choice",
       "required": true,
+      "help": "Single = one task/question to one person. Double = two to one person. Multiple = more than two to one person. Two tasks to two different people are two separate call-outs. Each task/question gets its own Request tab below (Multiple starts with 3; click + for more).",
       "options": [
-        { "value": "team_leader", "label": "Team Leader" },
-        { "value": "other", "label": "Other" }
+        { "value": "single", "label": "Single Loop", "short": "Single" },
+        { "value": "double", "label": "Double Loop", "short": "Double" },
+        { "value": "multiple", "label": "Multiple Loop", "short": "Multiple" }
       ]
     },
-    {
-      "key": "verbal_check_back",
+    {      "key": "content_domain",
+      "per_request": true,
+      "label": "Loop Content Domain",
+      "type": "choice",
+      "required": true,
+      "help": "A question is Information Seeking. A task is Task Direction; pick the corresponding task.",
+      "options": [
+        { "value": "information_seeking", "label": "Information Seeking", "short": "Info" },
+        { "value": "med_order", "label": "Med Order", "group": "Task Direction", "short": "Med" },
+        { "value": "cpr", "label": "CPR", "group": "Task Direction" },
+        { "value": "zoll", "label": "Zoll", "group": "Task Direction" },
+        { "value": "other", "label": "Other", "group": "Task Direction" }
+      ]
+    },
+    {      "key": "verbal_check_back",
+      "per_request": true,
       "label": "Verbal Check-back (timestamp)",
       "type": "timestamps",
-      "help": "For double/multiple loops, add every check-back to the same loop, each with its own timestamp.",
+      "help": "The check-backs for this request, each with its own timestamp.",
       "lists": [
         {
           "key": "information",
@@ -116,8 +121,8 @@
         }
       ]
     },
-    {
-      "key": "responder_alignment",
+    {      "key": "responder_alignment",
+      "per_request": true,
       "label": "Responder Alignment",
       "type": "choice",
       "required": true,
@@ -172,33 +177,32 @@
           } }
       ]
     },
-    {
-      "key": "task_completion",
+    {      "key": "loop_closure",
+      "per_request": true,
+      "label": "Loop Closure (timestamp)",
+      "type": "timestamps",
+      "help": "The initiator acknowledging receipt of this request's check-back.",
+      "lists": [
+        { "key": "closure", "label": "Loop Closure", "short": "Closure", "hotkey": "c" }
+      ]
+    },
+    {      "key": "task_completion",
       "label": "Task Completion",
       "type": "choice",
       "required": true,
-      "help": "Use check-backs and other cues (e.g. hearing CPR being performed). For information seeking, Full if the question was answered.",
+      "help": "Overall, for the whole call-out. Use check-backs and other cues (e.g. hearing CPR being performed). For information seeking, Full if the question was answered.",
       "options": [
         { "value": "full", "label": "Full Task Completion", "short": "Full" },
         { "value": "partial", "label": "Partial Task Completion", "short": "Partial" },
         { "value": "none", "label": "No Task Completion", "short": "None" }
       ]
     },
-    {
-      "key": "loop_closure",
-      "label": "Loop Closure (timestamp)",
-      "type": "timestamps",
-      "help": "The initiator acknowledging receipt of the check-back. Double/multiple loops: one entry per closure.",
-      "lists": [
-        { "key": "closure", "label": "Loop Closure", "short": "Closure", "hotkey": "c" }
-      ]
-    },
-    {
-      "key": "notes",
+    {      "key": "notes",
       "label": "Notes",
       "type": "notes",
       "help": "Characteristic features of the call-out, using the glossary.",
       "tags": [
+        { "value": "individual_loop", "label": "Individual Loop" },
         { "value": "linked_loop", "label": "Linked Loop" },
         { "value": "sequentially_independent_loop", "label": "Sequentially Independent Loop" },
         { "value": "sequentially_dependent_loop", "label": "Sequentially Dependent Loop" },
@@ -210,13 +214,14 @@
     {
       "message": "Information-seeking call-out was answered (has a Message Acknowledgement Check-back), so Task Completion should be Full.",
       "when": [
+        { "field": "loop_opened", "not_in": ["double", "multiple"] },
         { "field": "content_domain", "equals": "information_seeking" },
         { "field": "verbal_check_back.information", "empty": false }
       ],
       "expect": [{ "field": "task_completion", "equals": "full" }]
     },
     {
-      "message": "Loop Closure is the initiator acknowledging a check-back, but there is no Verbal Check-back.",
+      "message": "Loop Closure is the initiator acknowledging a check-back, but this request has no Verbal Check-back.",
       "when": [{ "field": "loop_closure", "empty": false }],
       "expect": [{ "any": [
         { "field": "verbal_check_back.information", "empty": false },
